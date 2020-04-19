@@ -1,0 +1,12 @@
+openseespy
+numpy
+sfsimodels
+eqsig
+matplotlib
+o3seespy
+liquepy
+pysra
+
+# testing
+pytest
+

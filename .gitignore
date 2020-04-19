@@ -1,0 +1,8 @@
+
+# Added by pypaper
+.idea/
+user_paths.py
+*.pyc
+temp_output/
+temp/*
+venv/
