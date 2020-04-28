@@ -27,7 +27,7 @@ def run():
     sp.add_layer(0, sl)
 
     rock = sm.Soil()
-    vs = 250.
+    vs = 450.
     unit_mass = 1700.0
     rock.g_mod = vs ** 2 * unit_mass
     rock.unit_dry_weight = unit_mass * 9.8
