@@ -215,7 +215,7 @@ if __name__ == '__main__':
 
     bf, sps = plt.subplots(nrows=2)
     sps[0].plot(stress, label='shear')
-    sps[0].plot(ppt)
+    sps[0].plot(ppt, label='PPT')
     sps[1].plot(strain, stress, label='o3seespy')
 
     stresses_tcl = np.loadtxt('Cycstress.out')
@@ -228,4 +228,5 @@ if __name__ == '__main__':
     sps[1].set_ylabel('Stress [kPa]')
     sps[0].legend()
     sps[1].legend()
+    bf.savefig('Comparison-PM4Sand-tcl-vs-o3.png')
     plt.show()
