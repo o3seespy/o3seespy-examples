@@ -193,12 +193,13 @@ if __name__ == '__main__':
     esig_v0 = 101.3
     gravity = 9.8
 
-    sl = lq.num.o3.PM4Sand()
+    sl = lq.num.o3.PM4Sand(liq_mass_density=1.0)
     sl.relative_density = 0.35
     sl.g0_mod = 476.0
     sl.h_po = 0.53
     crr_n15 = 0.13
-    sl.unit_dry_weight = 1.42 * gravity
+    sl.unit_sat_weight = 1.42 * gravity
+
     sl.e_min = 0.5
     sl.e_max = 0.8
     k0 = 0.5

@@ -113,7 +113,7 @@ def test_sdof():
 
     k_spring = 4 * np.pi ** 2 * mass / period ** 2
     outputs = get_elastic_response(mass, k_spring, asig.values, asig.dt, xi=xi, r_post=r_post)
-
+    acc_opensees_elastic = np.interp(asig.time, outputs["time"], outputs["rel_accel"]) - asig.values
     time = asig.time
 
     run = 1
@@ -124,6 +124,8 @@ def test_sdof():
         sps[0].plot(outputs["time"], outputs["rel_disp"], ls='--')
         sps[1].plot(outputs['rel_disp'], outputs['force'][:, 2])
         sps[2].plot(time, resp_a[0], lw=0.7, c='r')
+        sps[2].plot(outputs["time"], outputs["rel_accel"], ls='--')
+        sps[2].plot(time, acc_opensees_elastic, ls='--', c='g')
         plt.show()
 
 
