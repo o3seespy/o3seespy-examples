@@ -212,8 +212,12 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
     o3r = o3.results.Results2D()
     o3r.cache_path = out_folder
     o3r.dynamic = True
+    o3r.pseudo_dt = 0.001  # since analysis is actually static
+    o3.set_time(osi, 0.0)
     o3r.start_recorders(osi)
-    d_inc = 0.00001
+    # o3res.coords = o3.get_all_node_coords(osi)
+    # o3res.ele2node_tags = o3.get_all_ele_node_tags_as_dict(osi)
+    d_inc = 0.0001
 
     o3.numberer.RCM(osi)
     o3.system.BandGeneral(osi)
@@ -249,7 +253,7 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
 
     # o3.analyze(osi, 2)
     # n_max = 0
-
+    time = [0]
     while n_cycs < n_max:
         print('n_cycles: ', n_cycs)
         for i in range(2):
@@ -258,7 +262,8 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
             else:
                 o3.integrator.DisplacementControl(osi, nd[f"C1-S{fb.n_storeys}"], o3.cc.X, -d_inc)
             while hd * (-1) ** i < d_max:
-                ok = o3.analyze(osi, 1)
+                ok = o3.analyze(osi, 10)
+                time.append(time[len(time) - 1] + 1)
                 hd = o3.get_node_disp(osi, nd[f"C1-S{fb.n_storeys}"], o3.cc.X)
                 outputs['h_disp'].append(hd)
                 opy.reactions()
@@ -272,7 +277,7 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
         n_cycs += 1
 
     opy.wipe()
-    # o3r.save_to_cache()
+    o3r.save_to_cache()
     for item in outputs:
         outputs[item] = np.array(outputs[item])
     print('complete')
@@ -313,7 +318,7 @@ if __name__ == '__main__':
         os.makedirs(out_folder)
     frame = load_2storey_frame_building_sample_data()
     print("Building loaded")
-    rerun = 0
+    rerun = 1
     if rerun:
         outs = get_inelastic_response(frame, elastic=0, out_folder=out_folder)
 
@@ -328,6 +333,9 @@ if __name__ == '__main__':
     w_playback = 1  # TODO: not working properly
     if w_playback:
         o3res = o3.results.Results2D(cache_path=out_folder, dynamic=True)
+        # time = np.loadtxt(f'{out_folder}timer.txt')
+        # time[:, 0] = np.arange(len(time[:, 0])) * 0.001
+        # np.savetxt(f'{out_folder}timer.txt', time)
         o3res.load_from_cache()
         o3plot.replot(o3res, xmag=5.5, t_scale=10)
     # o3plot.replot(out_folder, dynamic=1, xmag=10, dt=0.001, t_scale=1)
