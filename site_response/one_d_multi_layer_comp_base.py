@@ -275,19 +275,19 @@ def run():
     sl_base.xi = 0.03  # for linear analysis
     soil_profile.add_layer(10.1, sl_base)
     soil_profile.height = 20.0
-
+    gm_scale_factor = 1.5
     record_filename = 'short_motion_dt0p01.txt'
-    in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=0.25)
+    in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
     od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]))
-    pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
+    pysra_surf_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
     outputs = site_response(soil_profile, in_sig)
     resp_dt = outputs['time'][2] - outputs['time'][1]
-    surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
+    o3_surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
 
-    o3_surf_vals = np.interp(pysra_sig.time, surf_sig.time, surf_sig.values)
+    o3_surf_vals = np.interp(pysra_surf_sig.time, o3_surf_sig.time, o3_surf_sig.values)
 
     show = 1
 
@@ -298,22 +298,25 @@ def run():
         bf, sps = plt.subplots(nrows=3)
 
         sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
-        sps[0].plot(pysra_sig.time, o3_surf_vals, c=cbox(0), label='o3')
-        sps[0].plot(pysra_sig.time, pysra_sig.values, c=cbox(1), label='pysra')
+        sps[0].plot(pysra_surf_sig.time, o3_surf_vals, c=cbox(0), label='o3')
+        sps[0].plot(pysra_surf_sig.time, pysra_surf_sig.values, c=cbox(1), label='pysra')
 
         sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
-        sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(0))
-        sps[1].plot(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c=cbox(1))
+        sps[1].plot(o3_surf_sig.fa_frequencies, abs(o3_surf_sig.fa_spectrum), c=cbox(0))
+        sps[1].plot(pysra_surf_sig.fa_frequencies, abs(pysra_surf_sig.fa_spectrum), c=cbox(1))
         sps[1].set_xlim([0, 20])
-        h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-        sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(0))
-        pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-        sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
+        in_sig.smooth_fa_frequencies = in_sig.fa_frequencies
+        pysra_surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies
+        o3_surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies
+        h = o3_surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(o3_surf_sig.smooth_fa_frequencies, h, c=cbox(0))
+        pysra_h = pysra_surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(pysra_surf_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
         sps[2].axhline(1, c='k', ls='--')
         sps[0].legend()
         plt.show()
 
-    assert np.isclose(o3_surf_vals, pysra_sig.values, atol=0.01, rtol=100).all()
+    assert np.isclose(o3_surf_vals, pysra_surf_sig.values, atol=0.01, rtol=100).all()
 
 
 if __name__ == '__main__':

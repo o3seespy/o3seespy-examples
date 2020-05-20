@@ -209,8 +209,9 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
     print('response period: ', response_period)
 
     # Run the analysis
-    o3r = o3_plot.O3Results()
+    o3r = o3.results.Results2D()
     o3r.cache_path = out_folder
+    o3r.dynamic = True
     o3r.start_recorders(osi)
     d_inc = 0.00001
 
@@ -271,7 +272,7 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
         n_cycs += 1
 
     opy.wipe()
-    o3r.save_to_cache()
+    # o3r.save_to_cache()
     for item in outputs:
         outputs[item] = np.array(outputs[item])
     print('complete')
@@ -312,7 +313,7 @@ if __name__ == '__main__':
         os.makedirs(out_folder)
     frame = load_2storey_frame_building_sample_data()
     print("Building loaded")
-    rerun = 1
+    rerun = 0
     if rerun:
         outs = get_inelastic_response(frame, elastic=0, out_folder=out_folder)
 
@@ -324,5 +325,10 @@ if __name__ == '__main__':
         sps[1].plot(outs["h_disp"], outs["vb"])
         plt.show()
     print("Complete")
-    o3_plot.replot(out_folder, dynamic=1, xmag=10, dt=0.001, t_scale=1)
+    w_playback = 1  # TODO: not working properly
+    if w_playback:
+        o3res = o3.results.Results2D(cache_path=out_folder, dynamic=True)
+        o3res.load_from_cache()
+        o3plot.replot(o3res, xmag=5.5, t_scale=10)
+    # o3plot.replot(out_folder, dynamic=1, xmag=10, dt=0.001, t_scale=1)
 
