@@ -103,15 +103,15 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
         else:
             umass = sl.unit_dry_mass / 1e3
         # Define material
-        if sl.type == 'pm4sand':
+        if sl.o3_type == 'pm4sand':
             sl_class = o3.nd_material.PM4Sand
             overrides = {'nu': pois, 'p_atm': 101, 'unit_moist_mass': umass}
             app2mod = sl.app2mod
-        elif sl.type == 'sdmodel':
+        elif sl.o3_type == 'sdmodel':
             sl_class = o3.nd_material.StressDensity
             overrides = {'nu': pois, 'p_atm': 101, 'unit_moist_mass': umass}
             app2mod = sl.app2mod
-        elif sl.type == 'pimy':
+        elif sl.o3_type == 'pimy':
             sl_class = o3.nd_material.PressureIndependMultiYield
             overrides = {'nu': pois, 'p_atm': 80,
                          'rho': umass,
@@ -247,7 +247,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
 def run():
     sl = sm.Soil()
-    sl.type = 'pimy'
+    sl.o3_type = 'pimy'
     vs = 250.
     unit_mass = 1700.0
     sl.cohesion = 120.0e3
@@ -263,7 +263,7 @@ def run():
     soil_profile.height = 30.0
 
     sl_base = sm.Soil()
-    sl_base.type = 'pimy'
+    sl_base.o3_type = 'pimy'
     vs = 450.
     unit_mass = 1700.0
     sl_base.g_mod = vs ** 2 * unit_mass
