@@ -2,7 +2,7 @@ import o3seespy as o3
 
 
 def run(use_pload):
-    # If pload=true then apply point load at end, else apply distributed load along beam
+    # If use_pload=true then apply point load at end, else apply distributed load along beam
 
     osi = o3.OpenSeesInstance(ndm=2, state=3)
 
