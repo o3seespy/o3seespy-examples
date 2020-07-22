@@ -6,7 +6,7 @@ matplotlib
 o3seespy
 liquepy
 pysra
-
+bwplot
 # testing
 pytest
 
