@@ -19,7 +19,7 @@ def get_elastic_response(mass, k_spring, motion, dt, xi=0.05, r_post=0.0):
     :param r_post: post-yield stiffness
     :return:
     """
-    osi = o3.OpenSeesInstance(ndm=2, state=0)
+    osi = o3.OpenSeesInstance(ndm=2, state=3)
 
     height = 5.
     # Establish nodes
@@ -64,6 +64,7 @@ def get_elastic_response(mass, k_spring, motion, dt, xi=0.05, r_post=0.0):
     o3.constraints.Transformation(osi)
     o3.integrator.Newmark(osi, 0.5, 0.25)
     o3.analysis.Transient(osi)
+    o3.extensions.to_py_file(osi, 'simple.py')
 
     o3.test_check.EnergyIncr(osi, tol=1.0e-10, max_iter=10)
     analysis_time = (len(motion) - 1) * dt

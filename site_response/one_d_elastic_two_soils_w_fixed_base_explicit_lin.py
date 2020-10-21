@@ -2,18 +2,19 @@ import o3seespy as o3
 import o3seespy.extensions
 import copy
 import sfsimodels as sm
+import json
 import numpy as np
 import eqsig
 import all_paths as ap
+# for linear analysis comparison
 import liquepy as lq
-import matplotlib.pyplot as plt
-from bwplot import cbox
+import pysra
+import json
 
 
-def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
-                  analysis_time=None, outs=None, rec_dt=None, ff_bc=True, x_eles=1):
+def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None, rec_dt=None):
     """
-    Run seismic analysis of a soil profile that has a compliant base
+    Run seismic analysis of a soil profile
 
     Parameters
     ----------
@@ -21,10 +22,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
         A soil profile
     asig: eqsig.AccSignal object
         An acceleration signal
-    fc_bc: bool
-        If true then use fre-field columns as boundaries, else use tied boundaries
-    x_eles: int
-        Number of elements in the x-direction
 
     Returns
     -------
@@ -53,36 +50,27 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
     a1 = 2 * xi / (omega_1 + omega_2)
 
+    k0 = 0.5
+
     newmark_gamma = 0.5
     newmark_beta = 0.25
 
+    ele_width = min(thicknesses)
+    total_soil_nodes = len(thicknesses) * 2 + 2
+
     # Define nodes and set boundary conditions for simple shear deformation
     # Start at top and build down?
-    nx = np.linspace(0, 0.5 * x_eles, x_eles + 1)
-    sn = [[o3.node.Node(osi, x, 0) for x in nx]]
+    sn = [[o3.node.Node(osi, 0, 0), o3.node.Node(osi, ele_width, 0)]]
     for i in range(1, n_node_rows):
         # Establish left and right nodes
-        sn.append([o3.node.Node(osi, x, -node_depths[i]) for x in nx])
+        sn.append([o3.node.Node(osi, 0, -node_depths[i]),
+                    o3.node.Node(osi, ele_width, -node_depths[i])])
         # set x and y dofs equal for left and right nodes
-        if i < n_node_rows - 1:
-            if ff_bc:  # Use free-field columns as boundary conditions
-                o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
-                o3.EqualDOF(osi, sn[i][-2], sn[i][-1], [o3.cc.X, o3.cc.Y])
-            else:
-                o3.EqualDOF(osi, sn[i][0], sn[i][-1], [o3.cc.X, o3.cc.Y])
-    sn = np.array(sn)
+        o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
+
     # Fix base nodes
-    o3.Fix2DOFMulti(osi, sn[-1], o3.cc.FREE, o3.cc.FIXED)
-
-    # Define dashpot nodes
-    dashpot_node_l = o3.node.Node(osi, 0, -node_depths[-1])
-    dashpot_node_2 = o3.node.Node(osi, 0, -node_depths[-1])
-    o3.Fix2DOF(osi, dashpot_node_l, o3.cc.FIXED, o3.cc.FIXED)
-    o3.Fix2DOF(osi, dashpot_node_2, o3.cc.FREE, o3.cc.FIXED)
-
-    # define equal DOF for dashpot and soil base nodes
-    o3.EqualDOFMulti(osi, r_node=sn[-1, 0], c_nodes=sn[-1, 1:], dofs=[o3.cc.X])
-    o3.EqualDOF(osi, sn[-1][0], dashpot_node_2, [o3.cc.X])
+    o3.Fix2DOF(osi, sn[-1][0], o3.cc.FIXED, o3.cc.FIXED)
+    o3.Fix2DOF(osi, sn[-1][1], o3.cc.FIXED, o3.cc.FIXED)
 
     # define materials
     ele_thick = 1.0  # m
@@ -91,7 +79,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     prev_kwargs = {}
     prev_sl_type = None
     eles = []
-    area = 0
     for i in range(len(thicknesses)):
         y_depth = ele_depths[i]
 
@@ -127,25 +114,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
             prev_kwargs = copy.deepcopy(kwargs)
 
             soil_mats.append(mat)
-        for j in range(len(nx) - 1):
-            if j in [0, len(nx) - 2]:
-                if ff_bc:
-                    cur_ele_thick = ele_thick * 1000
-                else:
-                    cur_ele_thick = ele_thick
-            else:
-                cur_ele_thick = ele_thick
-            if i == 0:
-                area += cur_ele_thick * (sn[0][j+1].x - sn[0][j].x)
-            # def element
-            nodes = [sn[i+1][j], sn[i+1][j + 1], sn[i][j + 1], sn[i][j]]  # anti-clockwise
-            eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, cur_ele_thick, 0.0, grav * unit_masses[i]))
 
-    model_eff_width = area
-    base_sl = sp.layer(sp.n_layers)
-    c_base = model_eff_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
-    dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
-    o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
+        # def element
+        nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
+        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i]))
 
     # Static analysis
     o3.constraints.Transformation(osi)
@@ -196,21 +168,23 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
                     ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
 
     # Define the dynamic analysis
-    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
-    o3.pattern.Plain(osi, ts_obj)
-    o3.Load(osi, sn[-1][0], [1., 0.])
+    acc_series = o3.time_series.Path(osi, dt=asig.dt, values=asig.values)
+    o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=acc_series)
 
     # Run the dynamic analysis
-    o3.algorithm.Newton(osi)
+    o3.algorithm.Linear(osi)
     o3.system.SparseGeneral(osi)
     o3.numberer.RCM(osi)
     o3.constraints.Transformation(osi)
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    # o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    o3.integrator.ExplicitDifference(osi)
     o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
     o3.analysis.Transient(osi)
 
     o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
-    o3.extensions.to_py_file(osi, 'simple_1d_comp_mod.py')
+    # o3.analyze(osi, 100, analysis_dt)
+    # o3.extensions.to_tcl_file(osi, 'sra_fixed_base_linear_explicit.tcl')
+    # o3.extensions.to_py_file(osi, 'sra_fixed_base_linear_explicit.py', compress=False)
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
         if o3.analyze(osi, 1, analysis_dt):
@@ -229,6 +203,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     out_dict['time'] = np.arange(0, analysis_time, rec_dt)
 
     return out_dict
+
 
 
 def run():
@@ -258,63 +233,40 @@ def run():
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=0.5)
 
     # analysis with pysra
-    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='outcrop')
+    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='within')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
-    bf, sps = plt.subplots(nrows=3)
-
-    sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
-
-    sps[0].plot(pysra_sig.time, pysra_sig.values, c=cbox('mid grey'), label='pysra')
-
-    sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
-
-    sps[1].plot(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c=cbox('mid grey'))
-    sps[1].set_xlim([0, 20])
-    in_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
-    pysra_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
-    pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-    sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c=cbox('mid grey'))
-
-    # Normal 1d analysis with tied boundaries
-    outputs = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.02, analysis_dt=0.005, x_eles=1, ff_bc=False)
+    outputs = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.02, analysis_dt=0.0001)
     resp_dt = outputs['time'][2] - outputs['time'][1]
     surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
-    sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(0), label='o3 - 1D')
-    sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(0))
-    surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
-    h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-    sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(0))
 
-    # 2d analysis with tied boundaries
-    outputs = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.02, analysis_dt=0.005, x_eles=20, ff_bc=False)
-    resp_dt = outputs['time'][2] - outputs['time'][1]
-    surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
-    sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(1), label='o3 - 2D tied', ls='--')
-    sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(1), ls='--')
-    surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies
-    h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-    sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(1), ls='--')
+    o3_surf_vals = np.interp(pysra_sig.time, surf_sig.time, surf_sig.values)
 
-    # 2d analysis with free-field columns
-    outputs = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.02, analysis_dt=0.005, x_eles=20, ff_bc=True)
-    resp_dt = outputs['time'][2] - outputs['time'][1]
-    surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
-    sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(2), label='o3 - 2D FF columns', ls=':')
-    sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(2), ls=':')
-    surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies
-    h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-    sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(2), ls=':')
+    show = 1
 
-    sps[0].set_ylabel('Acc [m/s2]')
-    sps[1].set_ylabel('FA')
+    if show:
+        import matplotlib.pyplot as plt
+        from bwplot import cbox
 
-    sps[2].set_ylabel('H')
-    sps[2].set_xlabel('Freq [Hz]')
+        bf, sps = plt.subplots(nrows=3)
 
-    sps[2].axhline(1, c='k', ls='--')
-    sps[0].legend()
-    plt.show()
+        sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
+        sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(0), label='o3')
+        sps[0].plot(pysra_sig.time, pysra_sig.values, c=cbox(1), label='pysra')
+
+        sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
+        sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(0))
+        sps[1].plot(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c=cbox(1))
+        sps[1].set_xlim([0, 20])
+        h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(0))
+        pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
+        sps[2].axhline(1, c='k', ls='--')
+        sps[0].legend()
+        plt.show()
+
+    # assert np.isclose(o3_surf_vals, pysra_sig.values, atol=0.01, rtol=100).all()
 
 
 if __name__ == '__main__':

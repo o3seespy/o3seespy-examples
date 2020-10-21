@@ -6,7 +6,6 @@ import eqsig
 
 import numpy as np
 import o3plot
-from openseespy import opensees as opy
 import o3seespy as o3
 import all_paths as ap
 import os
@@ -191,7 +190,7 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
     o3.integrator.LoadControl(osi, d_gravity, num_iter=10)
     o3.analysis.Static(osi)
     o3.analyze(osi, n_steps_gravity)
-    opy.reactions()
+    o3.gen_reactions(osi)
     print('b1_int: ', o3.get_ele_response(osi, ed['C1C2-S1'], 'force'))
     print('c1_int: ', o3.get_ele_response(osi, ed['C1-S0S1'], 'force'))
 
@@ -201,7 +200,7 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
     # Define the analysis
 
     # set damping based on first eigen mode
-    angular_freq = opy.eigen('-fullGenLapack', 1) ** 0.5
+    angular_freq = o3.get_eigen(osi, solver='fullGenLapack', n=1)[0] ** 0.5
     if isinstance(angular_freq, complex):
         raise ValueError("Angular frequency is complex, issue with stiffness or mass")
     print('angular_freq: ', angular_freq)
@@ -266,7 +265,7 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
                 time.append(time[len(time) - 1] + 1)
                 hd = o3.get_node_disp(osi, nd[f"C1-S{fb.n_storeys}"], o3.cc.X)
                 outputs['h_disp'].append(hd)
-                opy.reactions()
+                o3.gen_reactions(osi)
                 vb = 0
                 for cc in range(1, fb.n_cols + 1):
                     vb += o3.get_node_reaction(osi, nd[f"C{cc}-S0"], o3.cc.X)
@@ -276,7 +275,7 @@ def get_inelastic_response(fb, roof_drift_ratio=0.05, elastic=False, w_sfsi=Fals
 
         n_cycs += 1
 
-    opy.wipe()
+    o3.wipe(osi)
     o3r.save_to_cache()
     for item in outputs:
         outputs[item] = np.array(outputs[item])
