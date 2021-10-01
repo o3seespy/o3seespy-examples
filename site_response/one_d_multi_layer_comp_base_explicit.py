@@ -12,9 +12,11 @@ import pysra
 import json
 
 
-def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None, rec_dt=None):
+def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None,
+                  rec_dt=None, use_explicit=0):
     """
     Run seismic analysis of a soil profile
+
     Parameters
     ----------
     sp: sfsimodels.SoilProfile object
@@ -87,7 +89,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     soil_mats = []
     strains = np.logspace(-6, -0.5, 16)
     ref_strain = 0.005
-    rats = 1. / (1 + (strains / ref_strain) ** 0.91)
     prev_args = []
     prev_kwargs = {}
     prev_sl_type = None
@@ -167,8 +168,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    # o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
-    o3.integrator.ExplicitDifference(osi)  # TODO: change to modal damping, a diagonal solver ??
+    if use_explicit:
+        o3.integrator.ExplicitDifference(osi)  # TODO: change to modal damping, a diagonal solver ??
+    else:
+        o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
@@ -220,18 +223,30 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.system.SparseGeneral(osi)
     o3.numberer.RCM(osi)
     o3.constraints.Transformation(osi)
-    # o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
-    o3.integrator.ExplicitDifference(osi)
-    o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+    if use_explicit:
+        o3.integrator.ExplicitDifference(osi)
+        # o3.integrator.NewmarkExplicit(osi, newmark_gamma)  # also works
+    else:
+        o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    n = 2
+    modal_damp = 0
+    omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
+    response_periods = 2 * np.pi / omegas
+    print('response_periods: ', response_periods)
+    if not modal_damp:
+        o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+    else:
+        o3.ModalDamping(osi, [xi, xi])
     o3.analysis.Transient(osi)
 
-    o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-7, max_iter=10)
 
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
         if o3.analyze(osi, 1, analysis_dt):
             print('failed')
             break
+
     o3.wipe(osi)
     out_dict = {}
     for otype in ods:
@@ -248,6 +263,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
 
 def run():
+    soil_profile = sm.SoilProfile()
+    soil_profile.height = 30.0
+    xi = 0.03
+
     sl = sm.Soil()
     sl.o3_type = 'pimy'
     vs = 250.
@@ -260,9 +279,7 @@ def run():
     sl.specific_gravity = 2.65
     sl.xi = 0.03  # for linear analysis
     assert np.isclose(vs, sl.get_shear_vel(saturated=False))
-    soil_profile = sm.SoilProfile()
     soil_profile.add_layer(0, sl)
-    soil_profile.height = 30.0
 
     sl_base = sm.Soil()
     sl_base.o3_type = 'pimy'
@@ -282,10 +299,10 @@ def run():
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
-    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]))
+    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]), wave_field='outcrop')
     pysra_surf_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
-    outputs = site_response(soil_profile, in_sig, analysis_dt=0.0001)
+    outputs = site_response(soil_profile, in_sig, analysis_dt=0.00001)  # TODO: NOT WORKING!
     resp_dt = outputs['time'][2] - outputs['time'][1]
     o3_surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
 

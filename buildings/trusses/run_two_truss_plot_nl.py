@@ -80,6 +80,7 @@ def run(out_folder):
     # sps[1].plot(edata[:, 0])
     # # sps[0].plot(data[1])
     # plt.show()
+    o3r.load_from_cache()
     o3plot.replot(o3r)
 
 

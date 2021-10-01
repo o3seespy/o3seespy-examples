@@ -1,18 +1,15 @@
 import o3seespy as o3
-import o3seespy.extensions
 import copy
 import sfsimodels as sm
-import json
 import numpy as np
 import eqsig
 import all_paths as ap
 # for linear analysis comparison
 import liquepy as lq
-import pysra
-import json
 
 
-def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None, rec_dt=None):
+def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None,
+                  rec_dt=None, use_explicit=0):
     """
     Run seismic analysis of a soil profile
 
@@ -121,7 +118,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
     # Static analysis
     o3.constraints.Transformation(osi)
-    o3.test_check.NormDispIncr(osi, tol=1.0e-4, max_iter=30, p_flag=0)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
@@ -172,24 +169,36 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=acc_series)
 
     # Run the dynamic analysis
-    o3.algorithm.Linear(osi)
+
     o3.system.SparseGeneral(osi)
     o3.numberer.RCM(osi)
     o3.constraints.Transformation(osi)
-    # o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
-    o3.integrator.ExplicitDifference(osi)
-    o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+    if use_explicit:
+        o3.algorithm.Linear(osi, factor_once=True)
+        o3.integrator.ExplicitDifference(osi)
+        # o3.integrator.NewmarkExplicit(osi, newmark_gamma)  # also works
+    else:
+        o3.algorithm.Newton(osi)
+        o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    n = 2
+    modal_damp = 0
+    omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
+    response_periods = 2 * np.pi / omegas
+    print('response_periods: ', response_periods)
+    if not modal_damp:
+        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
+    else:
+        o3.ModalDamping(osi, [xi, xi])
     o3.analysis.Transient(osi)
 
-    o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
-    # o3.analyze(osi, 100, analysis_dt)
-    # o3.extensions.to_tcl_file(osi, 'sra_fixed_base_linear_explicit.tcl')
-    # o3.extensions.to_py_file(osi, 'sra_fixed_base_linear_explicit.py', compress=False)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
+
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
         if o3.analyze(osi, 1, analysis_dt):
             print('failed')
             break
+
     o3.wipe(osi)
     out_dict = {}
     for otype in ods:
@@ -205,10 +214,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     return out_dict
 
 
-
 def run():
     soil_profile = sm.SoilProfile()
     soil_profile.height = 30.0
+    xi = 0.03
 
     sl = sm.Soil()
     vs = 250.
@@ -216,7 +225,7 @@ def run():
     sl.g_mod = vs ** 2 * unit_mass
     sl.poissons_ratio = 0.0  # Note that this does not work when v>0
     sl.unit_dry_weight = unit_mass * 9.8
-    sl.xi = 0.01  # for linear analysis
+    sl.xi = xi  # for linear analysis
     soil_profile.add_layer(0, sl)
 
     sl_base = sm.Soil()
@@ -225,22 +234,26 @@ def run():
     sl_base.g_mod = vs ** 2 * unit_mass
     sl_base.poissons_ratio = 0.0
     sl_base.unit_dry_weight = unit_mass * 9.8
-    sl_base.xi = 0.01  # for linear analysis
+    sl_base.xi = xi  # for linear analysis
     soil_profile.add_layer(19., sl_base)
     soil_profile.height = 20.0
-
+    gm_scale_factor = 1.5
     record_filename = 'short_motion_dt0p01.txt'
-    in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=0.5)
+    in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
     od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='within')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
-    outputs = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.02, analysis_dt=0.0001)
-    resp_dt = outputs['time'][2] - outputs['time'][1]
-    surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
+    # Implicit analysis with O3
+    outputs_imp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, analysis_dt=0.001)
+    resp_dt = outputs_imp['time'][2] - outputs_imp['time'][1]
+    surf_sig_imp = eqsig.AccSignal(outputs_imp['ACCX'][0], resp_dt)
 
-    o3_surf_vals = np.interp(pysra_sig.time, surf_sig.time, surf_sig.values)
+    # Explicit analysis with O3
+    outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, analysis_dt=0.0001, use_explicit=1)
+    resp_dt = outputs_exp['time'][2] - outputs_exp['time'][1]
+    surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
 
     show = 1
 
@@ -248,21 +261,33 @@ def run():
         import matplotlib.pyplot as plt
         from bwplot import cbox
 
+        in_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
+        surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
+        pysra_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
+        surf_sig_imp.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
+
         bf, sps = plt.subplots(nrows=3)
 
         sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
-        sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(0), label='o3')
         sps[0].plot(pysra_sig.time, pysra_sig.values, c=cbox(1), label='pysra')
+        sps[0].plot(surf_sig_imp.time, surf_sig_imp.values, c=cbox(0), label='o3-imp')
+        sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(2), label='o3-exp', ls='--')
 
         sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
-        sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(0))
         sps[1].plot(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c=cbox(1))
+        sps[1].plot(surf_sig_imp.fa_frequencies, abs(surf_sig_imp.fa_spectrum), c=cbox(0))
+        sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(2), ls='--')
         sps[1].set_xlim([0, 20])
-        h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-        sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(0))
         pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
         sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
+
+        h = surf_sig_imp.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(in_sig.smooth_fa_frequencies, h, c=cbox(0))
+        h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(2), ls='--')
+
         sps[2].axhline(1, c='k', ls='--')
+
         sps[0].legend()
         plt.show()
 

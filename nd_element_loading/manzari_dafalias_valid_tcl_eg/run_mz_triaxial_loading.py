@@ -53,9 +53,9 @@ def run_mz_triaxial():
     perm = 1.0e-10  # permeability
     e_curr = 0.8  # void ratio
 
-    mzmod = o3.nd_material.ManzariDafalias(osi, g0=125, nu=0.05, e_init=e_curr, mc=1.25, c=0.712, lambda_c=0.019,
-                                           e0=0.934, ksi=0.7, p_atm=100, m=0.01, h0=7.05, ch=0.968, nb=1.1,
-                                           a0=0.704, nd=3.5, z_max=4, cz=600, den=1.42)
+    mzmod = o3.nd_material.ManzariDafalias(osi, g0=125, nu=0.05, e_init=0.8, m_c=1.25, c_c=0.712, lambda_c=0.019,
+                                              e_0=0.934, ksi=0.7, p_atm=100, m_yield=0.01, h_0=7.05, c_h=0.968, n_b=1.1,
+                                              a_0=0.704, n_d=3.5, z_max=4, c_z=600, den=1.42)
 
     water_bulk_mod = 2.2e6
     f_den = 1.0
@@ -72,7 +72,7 @@ def run_mz_triaxial():
     o3.numberer.RCM(osi)
     o3.system.BandGeneral(osi)
     o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
-    o3.rayleigh.Rayleigh(osi, a0, a1, 0.0, 0.0)
+    o3.rayleigh.Rayleigh(osi, a0, 0.0, a1, 0.0)
     o3.analysis.Transient(osi)
 
     # Add static vertical pressure and stress bias
