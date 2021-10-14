@@ -8,8 +8,8 @@ import all_paths as ap
 import liquepy as lq
 
 
-def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None,
-                  rec_dt=None, use_explicit=0, dtype='rayleigh'):
+def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None, outs=None,
+                  rec_dt=None, etype='implicit'):
     """
     Run seismic analysis of a soil profile
 
@@ -28,8 +28,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
         analysis_time = asig.time[-1]
     if outs is None:
         outs = {'ACCX': [0]}  # Export the horizontal acceleration at the surface
-    if rec_dt is None:
-        rec_dt = analysis_dt
 
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
@@ -170,40 +168,54 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
     # Run the dynamic analysis
 
+    n = 4
+    # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
+    omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
+    periods = 2 * np.pi / omegas
+    print('response_periods: ', periods)
+
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
     o3.numberer.RCM(osi)
-
-    o3.system.FullGeneral(osi)
-    if use_explicit:
-        o3.system.Diagonal(osi)
-        o3.algorithm.Linear(osi, factor_once=True)
-        o3.integrator.ExplicitDifference(osi)
-        # o3.integrator.NewmarkExplicit(osi, newmark_gamma)  # also works
-    else:
+    if etype == 'implicit':
         # o3.algorithm.Newton(osi)
-        # o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+        o3.system.FullGeneral(osi)
+        # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         o3.algorithm.NewtonLineSearch(osi, 0.75)
         o3.integrator.Newmark(osi, 0.55, 0.277)
-    n = 2
+        dt = 0.001
+    else:
+        o3.algorithm.Linear(osi)
 
-    omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
-    response_periods = 2 * np.pi / omegas
-    print('response_periods: ', response_periods)
-    if dtype == 'rayleigh':
+        if etype == 'newmark_explicit':
+            o3.system.FullGeneral(osi)
+            o3.integrator.NewmarkExplicit(osi, gamma=0.5)
+            explicit_dt = periods[-1] / np.pi / 32
+        elif etype == 'central_difference':
+            o3.system.FullGeneral(osi)
+            o3.integrator.CentralDifference(osi)
+            explicit_dt = periods[-1] / np.pi / 32
+        elif etype == 'hht_explicit':
+            o3.integrator.HHTExplicit(osi, alpha=0.5)
+            explicit_dt = periods[-1] / np.pi / 8
+        elif etype == 'explicit_difference':
+            # o3.opy.system('Diagonal')
+            o3.system.FullGeneral(osi)
+            # o3.system.Diagonal(osi)
+            o3.integrator.ExplicitDifference(osi)
+            explicit_dt = periods[-1] / np.pi / 32
+        else:
+            raise ValueError(etype)
+        print('explicit_dt: ', explicit_dt)
+        dt = explicit_dt
+
+    if etype == 'newmark_explicit':  # Does not support modal damping
         o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
-    elif dtype == 'modal':
-        o3.ModalDamping(osi, [xi, xi])
-    elif dtype == 'modalQ':  # uniform
-        o3.opy.modalDampingQ()
+    else:
+        o3.ModalDamping(osi, [xi])
     o3.analysis.Transient(osi)
 
-
-    while o3.get_time(osi) < analysis_time:
-        print(o3.get_time(osi))
-        if o3.analyze(osi, 1, analysis_dt):
-            print('failed')
-            break
+    o3.analyze(osi, int(analysis_time / dt), dt)
 
     o3.wipe(osi)
     out_dict = {}
@@ -215,7 +227,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
             out_dict[otype] = np.array(out_dict[otype])
         else:
             out_dict[otype] = ods[otype].collect().T
-    out_dict['time'] = np.arange(0, analysis_time, rec_dt)
+    out_dict['time'] = np.arange(0, analysis_time, dt)
 
     return out_dict
 
@@ -265,20 +277,20 @@ def run():
     sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c='r')
 
     # analysis with O3
-    dtypes = ['rayleigh', 'modal']  # ,, 'central_difference', 'newmark_explicit',
+    etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
     ls = ['-', '--', ':', '-.']
 
-    for i, dtype in enumerate(dtypes):
-        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, dtype=dtype)
+    for i, etype in enumerate(etypes):
+        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype)
         resp_dt = outputs_exp['time'][2] - outputs_exp['time'][1]
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
         surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
-        sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=dtype, ls=ls[i])
+        sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=etype, ls=ls[i])
         sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(i), ls=ls[i])
         h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
         sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(i), ls=ls[i])
 
-        sps[2].axhline(1, c='k', ls='--')
+    sps[2].axhline(1, c='k', ls='--')
     sps[1].set_xlim([0, 20])
 
     sps[0].legend(prop={'size': 6})
