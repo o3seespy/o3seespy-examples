@@ -1,10 +1,6 @@
-
-import sfsimodels
-import eqsig
-
 import numpy as np
-
 import o3seespy as o3
+import eqsig
 
 
 def run_analysis(etype, asig):
@@ -51,20 +47,20 @@ def run_analysis(etype, asig):
     o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=a_series)
 
     xi = 0.04
-    angular_freqs = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=4)) ** 0.5
+    angular_freqs = np.array(o3.get_eigen(osi, n=4)) ** 0.5
     print('angular_freqs: ', angular_freqs)
     periods = 2 * np.pi / angular_freqs
     print('periods: ', periods)
 
-    omega0 = 0.2
-    omega1 = 10.0
-    a1 = 2. * xi / (omega0 + omega1)
-    a0 = a1 * omega0 * omega1
-
-    beta_k = 2 * xi / angular_freqs[0]
-    o3.rayleigh.Rayleigh(osi, alpha_m=a0, beta_k=a1, beta_k_init=0.0, beta_k_comm=0.0)
-
-    # o3.ModalDamping(osi, [xi, xi])
+    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+        freqs = [0.5, 5]
+        omega_1 = 2 * np.pi * freqs[0]
+        omega_2 = 2 * np.pi * freqs[1]
+        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        a1 = 2 * xi / (omega_1 + omega_2)
+        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
+    else:
+        o3.ModalDamping(osi, [xi])
 
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=35, p_flag=0)
@@ -115,8 +111,6 @@ def run():
     motion_step = 0.01
     rec = np.loadtxt(ap.MODULE_DATA_PATH + f'gms/{record_filename}', skiprows=2)
 
-    xi = 0.05
-
     acc_signal = eqsig.AccSignal(rec, motion_step)
 
     etypes = ['implicit', 'central_difference', 'newmark_explicit', 'explicit_difference']  # ,
@@ -126,7 +120,19 @@ def run():
         time, roof_d, ele_resp = run_analysis(etype, acc_signal)
         ax[0].plot(time, roof_d, label=etype, ls=ls[i])
         ax[1].plot(time, ele_resp[:, 2], label=etype, ls=ls[i])  # moment
-    plt.legend()
+    ax[-1].set_xlabel('Time [s]')
+    ax[0].set_ylabel('Roof disp [m]')
+    ax[0].set_ylabel('Moment [Nm]')
+    ax[0].set_xlim([0, 10])
+    ax[0].text(1, -0.04, 'Note: Central diff. and Newmark exp. use Rayleigh damping')
+    ax[0].legend()
+    name = __file__.replace('.py', '')
+    name = name.split("fig_")[-1]
+    ax[0].text(0.5, 1.05, name, horizontalalignment='center', transform=ax[0].transAxes,
+            color='k', fontsize=8)
+    save = 1
+    if save:
+        bf.savefig(name + '.png', dpi=80)
     plt.show()
 
 

@@ -39,8 +39,8 @@ def get_inelastic_response(fb, asig, extra_time=0.0, xi=0.05, analysis_dt=0.001)
     """
     osi = o3.OpenSeesInstance(ndm=2)
 
-    q_floor = 10000.  # kPa
-    trib_width = fb.floor_length
+    q_floor = 6000.  # kPa
+    trib_width = fb.floor_length / 3
     trib_mass_per_length = q_floor * trib_width / 9.8
 
     # Establish nodes and set mass based on trib area
@@ -141,7 +141,7 @@ def get_inelastic_response(fb, asig, extra_time=0.0, xi=0.05, analysis_dt=0.001)
     o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=a_series)
 
     # set damping based on first eigen mode
-    angular_freq_sqrd = o3.get_eigen(osi, solver='fullGenLapack', n=1)
+    angular_freq_sqrd = o3.get_eigen(osi, n=1)
     if hasattr(angular_freq_sqrd, '__len__'):
         angular_freq = angular_freq_sqrd[0] ** 0.5
     else:
