@@ -21,7 +21,7 @@ def calc_yield_curvature(depth, eps_yield):
     return 2.1 * eps_yield / depth
 
 
-def get_inelastic_response(fb, asig, extra_time=0.0, xi=0.05, analysis_dt=0.001):
+def get_inelastic_response(fb, asig, etype, extra_time=0.0, xi=0.05, analysis_dt=0.001):
     """
     Run seismic analysis of a nonlinear FrameBuilding
 
@@ -39,8 +39,8 @@ def get_inelastic_response(fb, asig, extra_time=0.0, xi=0.05, analysis_dt=0.001)
     """
     osi = o3.OpenSeesInstance(ndm=2)
 
-    q_floor = 10000.  # kPa
-    trib_width = fb.floor_length
+    q_floor = 6000.  # kPa
+    trib_width = fb.floor_length / 3
     trib_mass_per_length = q_floor * trib_width / 9.8
 
     # Establish nodes and set mass based on trib area
@@ -62,7 +62,7 @@ def get_inelastic_response(fb, asig, extra_time=0.0, xi=0.05, analysis_dt=0.001)
                     node_mass = trib_mass_per_length * fb.bay_lengths[-1] / 2
                 else:
                     node_mass = trib_mass_per_length * (fb.bay_lengths[cc - 2] + fb.bay_lengths[cc - 1] / 2)
-                o3.set_node_mass(osi, nd[f"C{cc}-S{ss}"], node_mass, 0., 0.)
+                o3.set_node_mass(osi, nd[f"C{cc}-S{ss}"], node_mass, node_mass, node_mass * 1.5 ** 2)
 
     # Set all nodes on a storey to have the same displacement
     for ss in range(0, fb.n_storeys + 1):
@@ -141,30 +141,66 @@ def get_inelastic_response(fb, asig, extra_time=0.0, xi=0.05, analysis_dt=0.001)
     o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=a_series)
 
     # set damping based on first eigen mode
-    angular_freq_sqrd = o3.get_eigen(osi, solver='fullGenLapack', n=1)
-    if hasattr(angular_freq_sqrd, '__len__'):
-        angular_freq = angular_freq_sqrd[0] ** 0.5
-    else:
-        angular_freq = angular_freq_sqrd ** 0.5
-    if isinstance(angular_freq, complex):
-        raise ValueError("Angular frequency is complex, issue with stiffness or mass")
-    beta_k = 2 * xi / angular_freq
-    o3.rayleigh.Rayleigh(osi, alpha_m=0.0, beta_k=beta_k, beta_k_init=0.0, beta_k_comm=0.0)
+    # angular_freq_sqrd = o3.get_eigen(osi, solver='fullGenLapack', n=1)
+    # if hasattr(angular_freq_sqrd, '__len__'):
+    #     angular_freq = angular_freq_sqrd[0] ** 0.5
+    # else:
+    #     angular_freq = angular_freq_sqrd ** 0.5
+    # if isinstance(angular_freq, complex):
+    #     raise ValueError("Angular frequency is complex, issue with stiffness or mass")
+
+    angular_freqs = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=2)) ** 0.5
+    print('angular_freqs: ', angular_freqs)
+    periods = 2 * np.pi / angular_freqs
+    print('periods: ', periods)
+
+    omega0 = 0.2
+    omega1 = 10.0
+    a1 = 2. * xi / (omega0 + omega1)
+    a0 = a1 * omega0 * omega1
+
+    beta_k = 2 * xi / angular_freqs[0]
+    # o3.rayleigh.Rayleigh(osi, alpha_m=a0, beta_k=a1, beta_k_init=0.0, beta_k_comm=0.0)
+
+    o3.ModalDamping(osi, [xi, xi])
 
     # Run the dynamic analysis
 
     o3.wipe_analysis(osi)
 
-    o3.algorithm.Newton(osi)
-    o3.system.SparseGeneral(osi)
-    o3.numberer.RCM(osi)
     o3.constraints.Transformation(osi)
-    o3.integrator.Newmark(osi, 0.5, 0.25)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=35, p_flag=0)
+    o3.numberer.RCM(osi)
+    if etype == 'implicit':
+        o3.algorithm.Newton(osi)
+        o3.system.FullGeneral(osi)
+        o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
+        dt = 0.01
+    else:
+        o3.algorithm.Linear(osi)
+
+        if etype == 'newmark_explicit':
+            o3.system.FullGeneral(osi)
+            o3.integrator.NewmarkExplicit(osi, gamma=0.6)
+            explicit_dt = periods[0] / np.pi / 8
+        elif etype == 'central_difference':
+            o3.system.FullGeneral(osi)
+            o3.integrator.CentralDifference(osi)
+            explicit_dt = periods[0] / np.pi / 16  # 0.5 is a factor of safety
+        elif etype == 'hht_explicit':
+            o3.integrator.HHTExplicit(osi, alpha=0.5)
+            explicit_dt = periods[0] / np.pi / 8
+        elif etype == 'explicit_difference':
+            # o3.opy.system('Diagonal')
+            o3.system.Diagonal(osi)
+            o3.integrator.ExplicitDifference(osi)
+            explicit_dt = periods[0] / np.pi / 4
+        else:
+            raise ValueError(etype)
+        print('explicit_dt: ', explicit_dt)
+        dt = explicit_dt
     o3.analysis.Transient(osi)
 
-    tol = 1.0e-4
-    iter = 4
-    o3.test_check.EnergyIncr(osi, tol, iter, 0, 2)
     analysis_time = (len(asig.values) - 1) * asig.dt + extra_time
     outputs = {
         "time": [],
@@ -250,20 +286,6 @@ def load_small_frame_building_sample_data():
     return fb
 
 
-def run_as_e2e():
-    # from tests import conftest
-    import all_paths as ap
-    record_filename = 'test_motion_dt0p01.txt'
-    motion_step = 0.01
-    rec = np.loadtxt(ap.MODULE_DATA_PATH + 'gms/' + record_filename)
-
-    xi = 0.05
-
-    acc_signal = eqsig.AccSignal(rec, motion_step)
-    frame = load_small_frame_building_sample_data()
-    outputs = get_inelastic_response(frame, acc_signal, xi=xi, extra_time=0)
-
-
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import all_paths as ap
@@ -280,10 +302,13 @@ if __name__ == '__main__':
     frame = load_small_frame_building_sample_data()
     print("Building loaded")
 
-    outputs = get_inelastic_response(frame, acc_signal, xi=xi, extra_time=0)
-    print("Analysis complete")
-    acc_opensees = np.interp(time, outputs["time"], outputs["rel_accel"]) - rec
-    ux_opensees = np.interp(time, outputs["time"], outputs["rel_disp"])
-    plt.plot(ux_opensees)
+    etypes = ['implicit']  # , 'central_difference'
+    # etypes =['central_difference']
+    for i, etype in enumerate(etypes):
+        outputs = get_inelastic_response(frame, acc_signal, etype, xi=xi, extra_time=0)
+        print("Analysis complete")
+        acc_opensees = np.interp(time, outputs["time"], outputs["rel_accel"]) - rec
+        ux_opensees = np.interp(time, outputs["time"], outputs["rel_disp"])
+        plt.plot(ux_opensees)
     plt.show()
     print("Complete")
