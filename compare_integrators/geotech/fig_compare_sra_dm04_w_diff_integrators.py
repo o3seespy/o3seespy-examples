@@ -86,30 +86,23 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             print('Update model to linear')
             soil_mat.update_to_linear()
 
-    # Gravity analysis
+    # Static analysis
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
-    o3.algorithm.ModifiedNewton(osi)
+    o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
     newmark_gamma = 0.5
     newmark_beta = 0.25
     o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
     o3.analysis.Transient(osi)
-    omega_1 = 2 * np.pi * freqs[0]
-    omega_2 = 2 * np.pi * freqs[1]
-    a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-    a1 = 2 * xi / (omega_1 + omega_2)
-    o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
-    o3.analyze(osi, 40, 1.)
+    o3.analyze(osi, 80, 1.)
 
     for i, soil_mat in enumerate(soil_mats):
         if hasattr(soil_mat, 'update_to_nonlinear'):
             print('Update model to nonlinear')
             soil_mat.update_to_nonlinear()
-    if o3.analyze(osi, 50, 0.5):
-        print('Model failed')
-        return
+    o3.analyze(osi, 50, 0.25)
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
@@ -218,31 +211,50 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     return out_dict
 
 
+def gen_mz_toyoura_sand_dafalias_and_manzari_2004():
+    sl = lq.num.models.ManzariDafaliasModel()
+    sl.name = 'mz_toyoura_sand_dafalias_and_manzari_2004'
+    sl.g0 = 125.0
+    sl.poissons_ratio = 0.05  # Note kementzetzidis_2018 consider v=0.3
+    sl.m_c = 1.25
+    sl.c_c = 0.712
+    sl.lambda_c = 0.019
+    sl.e_0 = 0.934
+    sl.ksi = 0.7
+    sl.m_yield = 0.01
+    sl.h_0 = 7.05
+    sl.c_h = 0.968
+    sl.n_b = 1.1
+    sl.a_0 = 0.704
+    sl.n_d = 3.5
+    sl.z_max = 4
+    sl.c_z = 600
+    sl.e_min = 0.574  # Fioravante:2015ea
+    sl.e_max = 0.923  # Fioravante:2015ea
+    sl.specific_gravity = 2.65
+    sl.p_atm = 101.0e3
+    return sl
+
+
 def run():
     soil_profile = sm.SoilProfile()
     soil_profile.height = 30.0
     xi = 0.03
 
-    sl = lq.num.models.PM4Sand()
-    soil_profile.add_layer(0.0, sl)
-    unit_mass = 16.0e3 / 9.8
-    esig_v0 = 100.0e3
-    sl.phi = 33.0
-    sl.g_mod = 31.8e6
-    sl.poissons_ratio = 0.3
-    sl.set_g0_mod_at_v_eff_stress(esig_v0, sl.g_mod)
-    sl.g0_mod = 316.
-    # sl.h_po = 4.
-    sl.h_po = 0.833
+    sl = gen_mz_toyoura_sand_dafalias_and_manzari_2004()
     sl.relative_density = 0.6
-    print('G_mod: ', sl.g_mod)
-    sl.unit_dry_weight = unit_mass * 9.8
-    sl.specific_gravity = 2.65
+    soil_profile.add_layer(0.0, sl)
+    sl.xi = xi
 
-    sl.xi = 0.03  # used in pysra
-
-    sl.o3_mat = o3.nd_material.PM4Sand(None, sl.relative_density, sl.g0_mod, sl.h_po, nu=sl.poissons_ratio,
-                                 den=sl.unit_dry_mass, p_atm=101.0e3, a_do=0.001)
+    # Define o3 soil object
+    nu_init = 0.05
+    f_order = 1.0
+    soil_mat = o3.nd_material.ManzariDafalias(None, g0=sl.g0, nu=nu_init, e_init=sl.e_curr, m_c=sl.m_c,
+                                              c_c=sl.c_c, lambda_c=sl.lambda_c, e_0=sl.e_0, ksi=sl.ksi,
+                                              p_atm=sl.p_atm / f_order,
+                                              m_yield=sl.m_yield, h_0=sl.h_0, c_h=sl.c_h, n_b=sl.n_b, a_0=sl.a_0,
+                                              n_d=sl.n_d, z_max=sl.z_max, c_z=sl.c_z, den=sl.unit_dry_mass / f_order)
+    sl.o3_mat = soil_mat
 
     sl_base = sm.Soil()
     vs = 350.
@@ -278,8 +290,8 @@ def run():
 
     # analysis with O3
     etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
-    etypes = ['implicit']
     # etypes = ['central_difference']
+    etypes = ['implicit']
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
