@@ -10,7 +10,7 @@ import liquepy as lq
 import pysra
 
 
-def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None, rec_dt=None):
+def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None, rec_dt=None):
     """
     Run seismic analysis of a soil profile - example based on:
     http://opensees.berkeley.edu/wiki/index.php/Site_Response_Analysis_of_a_Layered_Soil_Column_(Total_Stress_Analysis)
@@ -44,10 +44,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     unit_masses = sp.split["unit_mass"] / 1e3
 
     grav = 9.81
-    omega_1 = 2 * np.pi * freqs[0]
-    omega_2 = 2 * np.pi * freqs[1]
-    a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-    a1 = 2 * xi / (omega_1 + omega_2)
 
     k0 = 0.5
     pois = k0 / (1 + k0)
@@ -193,7 +189,18 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.numberer.RCM(osi)
     o3.constraints.Transformation(osi)
     o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
-    o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+
+    if dtype == 'rayleigh':
+        omega_1 = 2 * np.pi * freqs[0]
+        omega_2 = 2 * np.pi * freqs[1]
+        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        a1 = 2 * xi / (omega_1 + omega_2)
+        o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+    else:
+        n = 4
+        omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
+        o3.ModalDamping(osi, [xi])
+
     o3.analysis.Transient(osi)
 
     o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
@@ -253,6 +260,7 @@ def run_pysra(soil_profile, asig, odepths, wave_field='outcrop'):
 def run():
     soil_profile = sm.SoilProfile()
     soil_profile.height = 30.0
+    xi = 0.03
 
     sl = sm.Soil()
     vs = 250.
@@ -260,7 +268,7 @@ def run():
     sl.g_mod = vs ** 2 * unit_mass
     sl.poissons_ratio = 0.0
     sl.unit_dry_weight = unit_mass * 9.8
-    sl.xi = 0.01  # for linear analysis
+    sl.xi = xi  # for linear analysis
     soil_profile.add_layer(0, sl)
 
     sl_base = sm.Soil()
@@ -269,7 +277,7 @@ def run():
     sl_base.g_mod = vs ** 2 * unit_mass
     sl_base.poissons_ratio = 0.0
     sl_base.unit_dry_weight = unit_mass * 9.8
-    sl_base.xi = 0.01  # for linear analysis
+    sl_base.xi = xi  # for linear analysis
     soil_profile.add_layer(19., sl_base)
     soil_profile.height = 20.0
     gm_scale_factor = 1.5
@@ -280,7 +288,9 @@ def run():
     od = run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]), wave_field='outcrop')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
-    outputs = site_response(soil_profile, in_sig)
+    dtype = 'rayleigh'
+    dtype = 'modal'
+    outputs = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, analysis_dt=0.001, dtype=dtype)
     resp_dt = outputs['time'][2] - outputs['time'][1]
     surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
 
@@ -307,12 +317,11 @@ def run():
         sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(0))
         sps[1].plot(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c=cbox(1))
         sps[1].set_xlim([0, 20])
-        pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-        sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
         h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
         sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(0))
+        pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
         sps[2].axhline(1, c='k', ls='--')
-
         sps[0].legend()
         plt.show()
 

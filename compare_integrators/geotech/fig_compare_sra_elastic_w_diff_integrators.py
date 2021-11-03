@@ -47,9 +47,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
     k0 = 0.5
 
-    newmark_gamma = 0.5
-    newmark_beta = 0.25
-
     ele_width = min(thicknesses)
     total_soil_nodes = len(thicknesses) * 2 + 2
 
@@ -114,13 +111,13 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
         eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i]))
 
-    # Static analysis
+    # Gravity analysis
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
@@ -179,28 +176,28 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.numberer.RCM(osi)
     if etype == 'implicit':
         # o3.algorithm.Newton(osi)
-        o3.system.FullGeneral(osi)
+        o3.system.ProfileSPD(osi)
         # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         o3.algorithm.NewtonLineSearch(osi, 0.75)
-        o3.integrator.Newmark(osi, 0.55, 0.277)
+        o3.integrator.Newmark(osi, 0.5, 0.25)
         dt = 0.001
     else:
         o3.algorithm.Linear(osi)
 
         if etype == 'newmark_explicit':
-            o3.system.FullGeneral(osi)
+            o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
             explicit_dt = periods[-1] / np.pi / 32
         elif etype == 'central_difference':
-            o3.system.FullGeneral(osi)
+            o3.system.ProfileSPD(osi)
             o3.integrator.CentralDifference(osi)
             explicit_dt = periods[-1] / np.pi / 32
         elif etype == 'hht_explicit':
             o3.integrator.HHTExplicit(osi, alpha=0.5)
             explicit_dt = periods[-1] / np.pi / 8
         elif etype == 'explicit_difference':
-            # o3.opy.system('Diagonal')
-            o3.system.FullGeneral(osi)
+            o3.opy.system('Diagonal')
+            # o3.system.FullGeneral(osi)
             # o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
             explicit_dt = periods[-1] / np.pi / 32
@@ -209,7 +206,11 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         print('explicit_dt: ', explicit_dt)
         dt = explicit_dt
 
-    if etype == 'newmark_explicit':  # Does not support modal damping
+    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+        omega_1 = 2 * np.pi * freqs[0]
+        omega_2 = 2 * np.pi * freqs[1]
+        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        a1 = 2 * xi / (omega_1 + omega_2)
         o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
     else:
         o3.ModalDamping(osi, [xi])

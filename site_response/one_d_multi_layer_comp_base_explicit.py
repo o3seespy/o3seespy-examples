@@ -38,6 +38,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
     sp.gen_split(props=['shear_vel', 'unit_mass'], target=dy)
+    req_dt = min(sp.split["thickness"] / sp.split['shear_vel']) / 8
     thicknesses = sp.split["thickness"]
     n_node_rows = len(thicknesses) + 1
     node_depths = np.cumsum(sp.split["thickness"])
@@ -263,10 +264,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
 
 def run():
-    soil_profile = sm.SoilProfile()
-    soil_profile.height = 30.0
-    xi = 0.03
-
     sl = sm.Soil()
     sl.o3_type = 'pimy'
     vs = 250.
@@ -279,7 +276,9 @@ def run():
     sl.specific_gravity = 2.65
     sl.xi = 0.03  # for linear analysis
     assert np.isclose(vs, sl.get_shear_vel(saturated=False))
+    soil_profile = sm.SoilProfile()
     soil_profile.add_layer(0, sl)
+    soil_profile.height = 30.0
 
     sl_base = sm.Soil()
     sl_base.o3_type = 'pimy'
@@ -302,7 +301,7 @@ def run():
     od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]), wave_field='outcrop')
     pysra_surf_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
-    outputs = site_response(soil_profile, in_sig, analysis_dt=0.00001)  # TODO: NOT WORKING!
+    outputs = site_response(soil_profile, in_sig, analysis_dt=1.0e-5, rec_dt=0.05)  # TODO: NOT WORKING!
     resp_dt = outputs['time'][2] - outputs['time'][1]
     o3_surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
 

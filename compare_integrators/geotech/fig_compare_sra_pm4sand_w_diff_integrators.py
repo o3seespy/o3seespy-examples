@@ -9,7 +9,7 @@ import liquepy as lq
 
 
 def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None, outs=None,
-                  rec_dt=None, etype='implicit'):
+                  rec_dt=None, etype='implicit', forder=1.0):
     """
     Run seismic analysis of a soil profile
 
@@ -37,7 +37,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     node_depths = np.cumsum(sp.split["thickness"])
     node_depths = np.insert(node_depths, 0, 0)
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
-    unit_masses = sp.split["unit_mass"] / 1e3
+    unit_masses = sp.split["unit_mass"] / forder
 
     grav = 9.81
 
@@ -61,9 +61,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     # define materials
     ele_thick = 1.0  # m
     soil_mats = []
-    prev_args = []
-    prev_kwargs = {}
-    prev_sl_type = None
     eles = []
     prev_id = -1
     for i in range(len(thicknesses)):
@@ -88,28 +85,22 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
     # Gravity analysis
     o3.constraints.Transformation(osi)
-    o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=2)
     o3.algorithm.ModifiedNewton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    newmark_gamma = 0.5
-    newmark_beta = 0.25
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
-    o3.analysis.Transient(osi)
-    omega_1 = 2 * np.pi * freqs[0]
-    omega_2 = 2 * np.pi * freqs[1]
-    a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-    a1 = 2 * xi / (omega_1 + omega_2)
-    o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
-    o3.analyze(osi, 40, 1.)
+    o3.integrator.LoadControl(osi, 1, 1)
+    o3.analysis.Static(osi)
+    o3.analyze(osi, 2)
 
     for i, soil_mat in enumerate(soil_mats):
         if hasattr(soil_mat, 'update_to_nonlinear'):
             print('Update model to nonlinear')
             soil_mat.update_to_nonlinear()
-    if o3.analyze(osi, 50, 0.5):
+    if o3.analyze(osi, 2):
         print('Model failed')
         return
+    print('finished post nonlinear gravity analysis')
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
@@ -157,13 +148,14 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     print('response_periods: ', periods)
 
     o3.constraints.Transformation(osi)
-    o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10, p_flag=2)
     o3.numberer.RCM(osi)
     if etype == 'implicit':
         # o3.algorithm.Newton(osi)
-        o3.system.FullGeneral(osi)
+        o3.system.ProfileSPD(osi)
         # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
-        o3.algorithm.NewtonLineSearch(osi, 0.75)
+        # o3.algorithm.NewtonLineSearch(osi, 0.75)
+        o3.algorithm.Newton(osi)
         o3.integrator.Newmark(osi, 0.55, 0.277)
         dt = 0.001
     else:
@@ -191,7 +183,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         print('explicit_dt: ', explicit_dt)
         dt = explicit_dt
 
-    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+    if etype in ['newmark_explicit', 'central_difference', 'implicit']:  # Does not support modal damping
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
@@ -255,7 +247,7 @@ def run():
     sl_base.o3_mat = o3.nd_material.ElasticIsotropic(None, e_mod=e_mod, nu=sl_base.poissons_ratio, rho=sl_base.unit_dry_mass)
     soil_profile.add_layer(19., sl_base)
     soil_profile.height = 20.0
-    gm_scale_factor = 1.5
+    gm_scale_factor = 0.5
     record_filename = 'short_motion_dt0p01.txt'
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 

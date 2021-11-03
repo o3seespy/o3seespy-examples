@@ -1,20 +1,18 @@
 import o3seespy as o3
-
 import copy
 import sfsimodels as sm
-import json
 import numpy as np
 import eqsig
 import all_paths as ap
 # for linear analysis comparison
 import liquepy as lq
-import pysra
-import json
 
 
-def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None, rec_dt=None):
+def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None, outs=None,
+                  rec_dt=None, etype='implicit', forder=1.0):
     """
     Run seismic analysis of a soil profile
+
     Parameters
     ----------
     sp: sfsimodels.SoilProfile object
@@ -30,30 +28,19 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
         analysis_time = asig.time[-1]
     if outs is None:
         outs = {'ACCX': [0]}  # Export the horizontal acceleration at the surface
-    if rec_dt is None:
-        rec_dt = analysis_dt
 
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
     sp.gen_split(props=['shear_vel', 'unit_mass'], target=dy)
+    req_dt = min(sp.split["thickness"] / sp.split['shear_vel']) / 8
     thicknesses = sp.split["thickness"]
     n_node_rows = len(thicknesses) + 1
     node_depths = np.cumsum(sp.split["thickness"])
     node_depths = np.insert(node_depths, 0, 0)
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
-    unit_masses = sp.split["unit_mass"] / 1e3
+    unit_masses = sp.split["unit_mass"] / forder
 
     grav = 9.81
-    omega_1 = 2 * np.pi * freqs[0]
-    omega_2 = 2 * np.pi * freqs[1]
-    a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-    a1 = 2 * xi / (omega_1 + omega_2)
-
-    k0 = 0.5
-    pois = k0 / (1 + k0)
-
-    newmark_gamma = 0.5
-    newmark_beta = 0.25
 
     ele_width = min(thicknesses)
     total_soil_nodes = len(thicknesses) * 2 + 2
@@ -85,74 +72,22 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     # define materials
     ele_thick = 1.0  # m
     soil_mats = []
-    strains = np.logspace(-6, -0.5, 16)
-    ref_strain = 0.005
-    prev_args = []
-    prev_kwargs = {}
-    prev_sl_type = None
     eles = []
+    prev_id = -1
     for i in range(len(thicknesses)):
         y_depth = ele_depths[i]
 
         sl_id = sp.get_layer_index_by_depth(y_depth)
         sl = sp.layer(sl_id)
-        app2mod = {}
-        if y_depth > sp.gwl:
-            umass = sl.unit_sat_mass / 1e3
-        else:
-            umass = sl.unit_dry_mass / 1e3
-        # Define material
-        if sl.o3_type == 'pm4sand':
-            sl_class = o3.nd_material.PM4Sand
-            overrides = {'nu': pois, 'p_atm': 101, 'unit_moist_mass': umass}
-            app2mod = sl.app2mod
-        elif sl.o3_type == 'sdmodel':
-            sl_class = o3.nd_material.StressDensity
-            overrides = {'nu': pois, 'p_atm': 101, 'unit_moist_mass': umass}
-            app2mod = sl.app2mod
-        elif sl.o3_type == 'pimy':
-            sl_class = o3.nd_material.PressureIndependMultiYield
-            overrides = {'nu': pois, 'p_atm': 80,
-                         'rho': umass,
-                         'nd': 2.0,
-                         'g_mod_ref': sl.g_mod / 1e3,
-                         'bulk_mod_ref': sl.bulk_mod / 1e3,
-                         'peak_strain': 0.05,
-                         'cohesion': sl.cohesion / 1e3,
-                         'phi': sl.phi,
-                         'p_ref': 101,
-                         'd': 0.0,
-                         'n_surf': 25
-                         }
-        else:
-            sl_class = o3.nd_material.ElasticIsotropic
-            sl.e_mod = 2 * sl.g_mod * (1 - sl.poissons_ratio) / 1e3
-            app2mod['rho'] = 'unit_moist_mass'
-            overrides = {'nu': sl.poissons_ratio, 'unit_moist_mass': umass}
-
-        args, kwargs = o3.extensions.get_o3_kwargs_from_obj(sl, sl_class, custom=app2mod, overrides=overrides)
-        changed = 0
-        if sl.type != prev_sl_type or len(args) != len(prev_args) or len(kwargs) != len(prev_kwargs):
-            changed = 1
-        else:
-            for j, arg in enumerate(args):
-                if not np.isclose(arg, prev_args[j]):
-                    changed = 1
-            for pm in kwargs:
-                if pm not in prev_kwargs or not np.isclose(kwargs[pm], prev_kwargs[pm]):
-                    changed = 1
-
-        if changed:
-            mat = sl_class(osi, *args, **kwargs)
-            prev_sl_type = sl.type
-            prev_args = copy.deepcopy(args)
-            prev_kwargs = copy.deepcopy(kwargs)
-
+        mat = sl.o3_mat
+        if sl_id != prev_id:
+            mat.build(osi)
             soil_mats.append(mat)
+            prev_id = sl_id
 
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
-        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i]))
+        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i] / forder))
 
     # define material and element for viscous dampers
     base_sl = sp.layer(sp.n_layers)
@@ -162,20 +97,21 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
     # Static analysis
     o3.constraints.Transformation(osi)
-    o3.test_check.NormDispIncr(osi, tol=1.0e-4, max_iter=30, p_flag=0)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    o3.integrator.Newmark(osi, 0.5, 0.25)
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
-    o3.extensions.to_py_file(osi, 'ofile_sra_pimy_og.py')
-
-    for i in range(len(soil_mats)):
-        if isinstance(soil_mats[i], o3.nd_material.PM4Sand) or isinstance(soil_mats[i], o3.nd_material.PressureIndependMultiYield):
-            o3.update_material_stage(osi, soil_mats[i], 1)
+    for i, soil_mat in enumerate(soil_mats):
+        if hasattr(soil_mat, 'update_to_nonlinear'):
+            print('Update model to nonlinear')
+            soil_mat.update_to_nonlinear()
     o3.analyze(osi, 50, 0.5)
+
+    o3.extensions.to_py_file(osi, 'ofile_sra_pimy.py')
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
@@ -216,21 +152,67 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.Load(osi, sn[-1][0], [1., 0.])
 
     # Run the dynamic analysis
-    o3.algorithm.Newton(osi)
-    o3.system.SparseGeneral(osi)
-    o3.numberer.RCM(osi)
+
+    n = 4
+    # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
+    omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
+    periods = 2 * np.pi / omegas
+    print('response_periods: ', periods)
+
     o3.constraints.Transformation(osi)
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
-    o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10, p_flag=2)
+    o3.numberer.RCM(osi)
+    if etype == 'implicit':
+        # o3.algorithm.Newton(osi)
+        o3.system.ProfileSPD(osi)
+        # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
+        # o3.algorithm.NewtonLineSearch(osi, 0.75)
+        o3.algorithm.Newton(osi)
+        o3.integrator.Newmark(osi, 0.55, 0.277)
+        dt = 0.001
+    else:
+        o3.algorithm.Linear(osi)
+
+        if etype == 'newmark_explicit':
+            o3.system.FullGeneral(osi)
+            o3.integrator.NewmarkExplicit(osi, gamma=0.5)
+            explicit_dt = periods[-1] / np.pi / 64
+        elif etype == 'central_difference':
+            o3.system.FullGeneral(osi)
+            o3.integrator.CentralDifference(osi)
+            explicit_dt = periods[-1] / np.pi / 64
+        elif etype == 'hht_explicit':
+            o3.integrator.HHTExplicit(osi, alpha=0.5)
+            explicit_dt = periods[-1] / np.pi / 8
+        elif etype == 'explicit_difference':
+            # o3.opy.system('Diagonal')
+            o3.system.FullGeneral(osi)
+            # o3.system.Diagonal(osi)
+            o3.integrator.ExplicitDifference(osi)
+            explicit_dt = periods[-1] / np.pi / 64
+        else:
+            raise ValueError(etype)
+        print('explicit_dt: ', explicit_dt)
+        dt = explicit_dt
+
+    if etype in ['newmark_explicit', 'central_difference', 'implicit']:  # Does not support modal damping
+        omega_1 = 2 * np.pi * freqs[0]
+        omega_2 = 2 * np.pi * freqs[1]
+        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        a1 = 2 * xi / (omega_1 + omega_2)
+        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
+    else:
+        o3.ModalDamping(osi, [xi])
     o3.analysis.Transient(osi)
 
-    o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-7, max_iter=10)
 
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
-        if o3.analyze(osi, 1, analysis_dt):
+        if o3.analyze(osi, 1, dt):
             print('failed')
             break
+
     o3.wipe(osi)
     out_dict = {}
     for otype in ods:
@@ -247,9 +229,11 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
 
 def run():
+    forder = 1.0e3
     sl = sm.Soil()
     sl.o3_type = 'pimy'
     vs = 250.
+    xi = 0.03
     unit_mass = 1700.0
     sl.cohesion = 120.0e3
     sl.phi = 0.0
@@ -258,6 +242,11 @@ def run():
     sl.unit_dry_weight = unit_mass * 9.8
     sl.specific_gravity = 2.65
     sl.xi = 0.03  # for linear analysis
+
+    sl.o3_mat = o3.nd_material.PressureIndependMultiYield(None, 2, unit_mass / forder, sl.g_mod / forder,
+                                                          sl.bulk_mod / forder, sl.cohesion / forder, 0.1,
+                                                          0.0, 101.0e3 / forder, 0.0, 25)
+
     assert np.isclose(vs, sl.get_shear_vel(saturated=False))
     soil_profile = sm.SoilProfile()
     soil_profile.add_layer(0, sl)
@@ -273,7 +262,11 @@ def run():
     sl_base.phi = 0.0
     sl_base.unit_dry_weight = unit_mass * 9.8
     sl_base.specific_gravity = 2.65
-    sl_base.xi = 0.03  # for linear analysis
+    sl_base.xi = xi  # for linear analysis
+    e_mod = 2 * sl_base.g_mod * (1 + sl_base.poissons_ratio)
+    sl_base.o3_mat = o3.nd_material.PressureIndependMultiYield(None, 2, unit_mass / forder, sl_base.g_mod / forder,
+                                                          sl_base.bulk_mod / forder, 480.0e3 / forder, 0.1, 0.0,
+                                                          101.0e3 / forder, 0.0, 25)
     soil_profile.add_layer(10.1, sl_base)
     soil_profile.height = 20.0
     gm_scale_factor = 1.5
@@ -281,10 +274,10 @@ def run():
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
-    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]))
+    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]), wave_field='outcrop')
     pysra_surf_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
-    outputs = site_response(soil_profile, in_sig)
+    outputs = site_response(soil_profile, in_sig, rec_dt=0.05, forder=forder)  # TODO: NOT WORKING!
     resp_dt = outputs['time'][2] - outputs['time'][1]
     o3_surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
 
@@ -296,15 +289,11 @@ def run():
         import matplotlib.pyplot as plt
         from bwplot import cbox
 
-        in_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
-        o3_surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
-        pysra_surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
-
         bf, sps = plt.subplots(nrows=3)
 
         sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
         sps[0].plot(pysra_surf_sig.time, o3_surf_vals, c=cbox(0), label='o3')
-        sps[0].plot(pysra_surf_sig.time, pysra_surf_sig.values, c=cbox(1), label='pysra')
+        sps[0].plot(pysra_surf_sig.time, pysra_surf_sig.values, c=cbox(1), label='pysra', ls='--')
 
         sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
         sps[1].plot(o3_surf_sig.fa_frequencies, abs(o3_surf_sig.fa_spectrum), c=cbox(0))
