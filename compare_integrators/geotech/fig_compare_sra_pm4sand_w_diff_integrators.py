@@ -290,8 +290,6 @@ def run():
     sps[0].legend(prop={'size': 6})
     plt.show()
 
-    # assert np.isclose(o3_surf_vals, pysra_sig.values, atol=0.01, rtol=100).all()
-
 
 if __name__ == '__main__':
     run()

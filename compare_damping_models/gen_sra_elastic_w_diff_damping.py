@@ -198,7 +198,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
         o3.opy.modalDampingQ()
     o3.analysis.Transient(osi)
 
-
+    o3.record(osi)
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
         if o3.analyze(osi, 1, analysis_dt):

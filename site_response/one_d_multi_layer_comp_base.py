@@ -225,7 +225,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.analysis.Transient(osi)
 
     o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
-
+    o3.record(osi)
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
         if o3.analyze(osi, 1, analysis_dt):

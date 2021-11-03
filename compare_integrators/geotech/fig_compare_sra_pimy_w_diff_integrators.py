@@ -9,7 +9,7 @@ import liquepy as lq
 
 
 def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None, outs=None,
-                  rec_dt=None, etype='implicit', forder=1.0):
+                  rec_dt=0.05, etype='implicit', forder=1.0):
     """
     Run seismic analysis of a soil profile
 
@@ -117,42 +117,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
 
-    ods = {}
-    for otype in outs:
-        if otype == 'ACCX':
-
-            ods['ACCX'] = []
-            if isinstance(outs['ACCX'], str) and outs['ACCX'] == 'all':
-                ods['ACCX'] = o3.recorder.NodesToArrayCache(osi, nodes=sn[:][0], dofs=[o3.cc.X], res_type='accel', dt=rec_dt)
-            else:
-                for i in range(len(outs['ACCX'])):
-                    ind = np.argmin(abs(node_depths - outs['ACCX'][i]))
-                    ods['ACCX'].append(o3.recorder.NodeToArrayCache(osi, node=sn[ind][0], dofs=[o3.cc.X], res_type='accel', dt=rec_dt))
-        if otype == 'TAU':
-            ods['TAU'] = []
-            if isinstance(outs['TAU'], str) and outs['TAU'] == 'all':
-                ods['TAU'] = o3.recorder.ElementsToArrayCache(osi, eles=eles, arg_vals=['stress'], dt=rec_dt)
-            else:
-                for i in range(len(outs['TAU'])):
-                    ind = np.argmin(abs(ele_depths - outs['TAU'][i]))
-                    ods['TAU'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['stress'], dt=rec_dt))
-
-        if otype == 'STRS':
-            ods['STRS'] = []
-            if isinstance(outs['STRS'], str) and outs['STRS'] == 'all':
-                ods['STRS'] = o3.recorder.ElementsToArrayCache(osi, eles=eles, arg_vals=['strain'], dt=rec_dt)
-            else:
-                for i in range(len(outs['STRS'])):
-                    ind = np.argmin(abs(ele_depths - outs['STRS'][i]))
-                    ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
-
-    # Define the dynamic analysis
-    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
-    o3.pattern.Plain(osi, ts_obj)
-    o3.Load(osi, sn[-1][0], [1., 0.])
-
-    # Run the dynamic analysis
-
     n = 4
     # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
     omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
@@ -193,7 +157,15 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         else:
             raise ValueError(etype)
         print('explicit_dt: ', explicit_dt)
-        dt = explicit_dt
+        ndp = np.ceil(np.log10(explicit_dt))
+        if 0.5 * 10 ** ndp < explicit_dt:
+            dt = 0.5 * 10 ** ndp
+        elif 0.2 * 10 ** ndp < explicit_dt:
+            dt = 0.2 * 10 ** ndp
+        elif 0.1 * 10 ** ndp < explicit_dt:
+            dt = 0.1 * 10 ** ndp
+        else:
+            raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
 
     if etype in ['newmark_explicit', 'central_difference', 'implicit']:  # Does not support modal damping
         omega_1 = 2 * np.pi * freqs[0]
@@ -206,7 +178,46 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.analysis.Transient(osi)
 
     o3.test_check.NormDispIncr(osi, tol=1.0e-7, max_iter=10)
+    rec_dt = 0.001
 
+    ods = {}
+    for otype in outs:
+        if otype == 'ACCX':
+
+            ods['ACCX'] = []
+            if isinstance(outs['ACCX'], str) and outs['ACCX'] == 'all':
+                ods['ACCX'] = o3.recorder.NodesToArrayCache(osi, nodes=sn[:][0], dofs=[o3.cc.X], res_type='accel', dt=rec_dt)
+            else:
+                for i in range(len(outs['ACCX'])):
+                    ind = np.argmin(abs(node_depths - outs['ACCX'][i]))
+                    ods['ACCX'].append(o3.recorder.NodeToArrayCache(osi, node=sn[ind][0], dofs=[o3.cc.X], res_type='accel', dt=rec_dt))
+        if otype == 'TAU':
+            ods['TAU'] = []
+            if isinstance(outs['TAU'], str) and outs['TAU'] == 'all':
+                ods['TAU'] = o3.recorder.ElementsToArrayCache(osi, eles=eles, arg_vals=['stress'], dt=rec_dt)
+            else:
+                for i in range(len(outs['TAU'])):
+                    ind = np.argmin(abs(ele_depths - outs['TAU'][i]))
+                    ods['TAU'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['stress'], dt=rec_dt))
+
+        if otype == 'STRS':
+            ods['STRS'] = []
+            if isinstance(outs['STRS'], str) and outs['STRS'] == 'all':
+                ods['STRS'] = o3.recorder.ElementsToArrayCache(osi, eles=eles, arg_vals=['strain'], dt=rec_dt)
+            else:
+                for i in range(len(outs['STRS'])):
+                    ind = np.argmin(abs(ele_depths - outs['STRS'][i]))
+                    ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
+    ods['time'] = o3.recorder.TimeToArrayCache(osi, dt=rec_dt)
+    # Define the dynamic analysis
+    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
+    o3.pattern.Plain(osi, ts_obj)
+    o3.Load(osi, sn[-1][0], [1., 0.])
+
+    # Run the dynamic analysis
+
+
+    o3.record(osi)
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
         if o3.analyze(osi, 1, dt):
@@ -223,7 +234,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             out_dict[otype] = np.array(out_dict[otype])
         else:
             out_dict[otype] = ods[otype].collect().T
-    out_dict['time'] = np.arange(0, analysis_time, rec_dt)
+    # out_dict['time'] = np.arange(0, analysis_time, rec_dt)
 
     return out_dict
 
@@ -275,42 +286,45 @@ def run():
 
     # analysis with pysra
     od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]), wave_field='outcrop')
-    pysra_surf_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
+    pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
-    outputs = site_response(soil_profile, in_sig, rec_dt=0.05, forder=forder)  # TODO: NOT WORKING!
-    resp_dt = outputs['time'][2] - outputs['time'][1]
-    o3_surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
+    import matplotlib.pyplot as plt
+    from bwplot import cbox
+    bf, sps = plt.subplots(nrows=3, figsize=(6, 8))
 
-    o3_surf_vals = np.interp(pysra_surf_sig.time, o3_surf_sig.time, o3_surf_sig.values)
+    in_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
+    pysra_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
+    sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
+    sps[0].plot(pysra_sig.time, pysra_sig.values, c='r', label='pysra')
+    sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
+    sps[1].plot(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c='r')
+    pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+    sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c='r')
 
-    show = 1
+    # analysis with O3
+    etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
+    # etypes = ['implicit']
+    etypes = ['implicit', 'central_difference']
+    etypes = ['newmark_explicit']
+    ls = ['-', '--', ':', '-.']
 
-    if show:
-        import matplotlib.pyplot as plt
-        from bwplot import cbox
+    for i, etype in enumerate(etypes):
+        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype, forder=forder, rec_dt=in_sig.dt)
+        resp_dt = (outputs_exp['time'][-1] - outputs_exp['time'][0]) / (len(outputs_exp['time']) - 1)
+        # resp_dt = (outputs_exp['time'][1] - outputs_exp['time'][0])
+        surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
+        surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
+        sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=etype, ls=ls[i])
+        sps[0].plot(outputs_exp['time'], outputs_exp['ACCX'][0], c=cbox(i), label=etype, ls='--')
+        sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(i), ls=ls[i])
+        h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
+        sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(i), ls=ls[i])
 
-        bf, sps = plt.subplots(nrows=3)
+    sps[2].axhline(1, c='k', ls='--')
+    sps[1].set_xlim([0, 20])
 
-        sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
-        sps[0].plot(pysra_surf_sig.time, o3_surf_vals, c=cbox(0), label='o3')
-        sps[0].plot(pysra_surf_sig.time, pysra_surf_sig.values, c=cbox(1), label='pysra', ls='--')
-
-        sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
-        sps[1].plot(o3_surf_sig.fa_frequencies, abs(o3_surf_sig.fa_spectrum), c=cbox(0))
-        sps[1].plot(pysra_surf_sig.fa_frequencies, abs(pysra_surf_sig.fa_spectrum), c=cbox(1))
-        sps[1].set_xlim([0, 20])
-        in_sig.smooth_fa_frequencies = in_sig.fa_frequencies
-        pysra_surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies
-        o3_surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies
-        h = o3_surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-        sps[2].plot(o3_surf_sig.smooth_fa_frequencies, h, c=cbox(0))
-        pysra_h = pysra_surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-        sps[2].plot(pysra_surf_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
-        sps[2].axhline(1, c='k', ls='--')
-        sps[0].legend()
-        plt.show()
-
-    assert np.isclose(o3_surf_vals, pysra_surf_sig.values, atol=0.01, rtol=100).all()
+    sps[0].legend(prop={'size': 6})
+    plt.show()
 
 
 if __name__ == '__main__':
