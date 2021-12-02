@@ -305,7 +305,8 @@ def run():
     etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
     # etypes = ['implicit']
     etypes = ['implicit', 'central_difference']
-    etypes = ['newmark_explicit']
+    etypes = ['implicit', 'newmark_explicit']
+    etypes = ['explicit_difference']
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):

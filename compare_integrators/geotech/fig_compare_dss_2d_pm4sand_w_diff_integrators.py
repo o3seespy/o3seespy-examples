@@ -58,7 +58,7 @@ def run_ts_custom_strain(mat, esig_v0, strains, osi=None, nu_dyn=None, target_d_
     o3.numberer.RCM(osi)
     if etype == 'implicit':
         o3.algorithm.Newton(osi)
-        o3.system.SparseGeneral(osi)
+        o3.system.FullGeneral(osi)
         o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         dt = 0.01
     else:
@@ -243,29 +243,30 @@ def run_example(show=0):
         unit_dry_mass = 1.6e3
         bulk_mod = 2 * g_mod * (1 + poissons_ratio) / (3 * (1 - 2 * poissons_ratio))
 
+        sl = lq.num.models.PM4Sand()
+        unit_mass = 15471. / 9.8
+        esig_v0 = 100.0e3
+        ref_press = 100.e3
+        sl.phi = 33.0
+        g_mod = 31.8e6
+        sl.poissons_ratio = 0.3
+        sl.set_g0_mod_at_v_eff_stress(esig_v0, g_mod, plane_strain=1)
+        sl.g0_mod = 316.
+        # sl.h_po = 4.
+        sl.h_po = 0.833
+        sl.relative_density = 0.405
+        print('G_mod: ', g_mod)
+        sl.unit_dry_weight = unit_mass * 9.8
+        sl.specific_gravity = 2.65
 
-        etypes = ['explicit_difference', 'central_difference']
+        # etypes = ['explicit_difference', 'central_difference']
+        etypes = ['implicit']
+        etypes = []
         # etypes =['central_difference']
         for i, etype in enumerate(etypes):
-            sl = lq.num.models.PM4Sand()
-            unit_mass = 15471. / 9.8
-            esig_v0 = 100.0e3
-            ref_press = 100.e3
-            sl.phi = 33.0
-            sl.g_mod = 31.8e6
-            sl.set_g0_mod_at_v_eff_stress(esig_v0, sl.g_mod)
-            sl.g0_mod = 316.
-            # sl.h_po = 4.
-            sl.h_po = 0.833
-            sl.relative_density = 0.405
-            print('G_mod: ', sl.g_mod)
-            sl.unit_dry_weight = unit_mass * 9.8
-            sl.specific_gravity = 2.65
-            sl.poissons_ratio = 0.3
-
-
             mat = o3.nd_material.PM4Sand(osi, sl.relative_density, sl.g0_mod, sl.h_po, nu=sl.poissons_ratio,
-                                                  den=sl.unit_dry_mass, p_atm=101.0e3, a_do=0.001)
+                                         den=sl.unit_dry_mass, p_atm=101.0e3, a_do=0.001)
+
             stime = timeit.timeit()
             ss, es, vp, hp, time, error = run_ts_custom_strain(mat, esig_v0=esig_v0, strains=peak_strains, osi=osi,
                                                  target_d_inc=1.0e-4, nl=True, etype=etype)
@@ -278,15 +279,17 @@ def run_example(show=0):
             sps[1].plot(time, ss, label=f'{etype}', c=cbox(i), ls=lsbox(i))
 
         import o3soil.drivers.two_d as d2d
-        mat = o3.nd_material.DruckerPrager(osi, bulk_mod, g_mod, sigma_y, rho, 0, 0, 0, 0, 0, 0, theta=0.0,
-                                           density=unit_dry_mass, p_atm=101.0e3)
+        # mat = o3.nd_material.DruckerPrager(osi, bulk_mod, g_mod, sigma_y, rho, 0, 0, 0, 0, 0, 0, theta=0.0,
+        #                                    density=unit_dry_mass, p_atm=101.0e3)
         # mat = o3.nd_material.ElasticIsotropic(osi, e_mod=e_mod, nu=poissons_ratio, rho=unit_dry_mass)
+        mat = o3.nd_material.PM4Sand(osi, sl.relative_density, sl.g0_mod, sl.h_po, nu=sl.poissons_ratio,
+                                     den=sl.unit_dry_mass, p_atm=101.0e3)
         stress, strain, v_eff, h_eff, exit_code = d2d.run_2d_strain_driver(osi, mat, esig_v0=esig_v0,
                                                                            disps=peak_strains,
                                                                            handle='warn', verbose=0,
                                                                            target_d_inc=0.00001)
 
-        sps[0].plot(strain, stress, c='r')
+        sps[0].plot(strain, stress, c='r', lw=0.5, ls='--')
         # sps[1].plot(strain[1:], stress[1:] / strain[1:], c='r')
         sps[0].legend()
         sps[1].legend()
