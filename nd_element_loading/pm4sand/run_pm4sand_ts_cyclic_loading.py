@@ -4,10 +4,9 @@ from inspect import signature
 import numpy as np
 import math
 import matplotlib.pyplot as plt
-from bwplot import cbox
 
 
-def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5, strain_limit=0.03, strain_inc=5.0e-6, etype='implicit'):
+def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5, runfile=None, water_bulk_mod=2.2e6, strain_limit=0.03, strain_inc=5.0e-6, cached=0):
 
     nu_init = k0 / (1 + k0)
     damp = 0.02
@@ -40,51 +39,17 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
 
     # Note water bulk modulus is irrelevant since constant volume test - so as soil skeleton contracts
     # the bulk modulus of the soil skeleton controls the change in effective stress
-    water_bulk_mod = 2.2e6
     ele = o3.element.SSPquadUP(osi, all_nodes, pm4sand, 1.0, water_bulk_mod, 1.,
                                 sl.permeability, sl.permeability, sl.e_curr, alpha=1.0e-5, b1=0.0, b2=0.0)
 
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=35, p_flag=0)
+    o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
-    omegas = np.array(o3.get_eigen(osi, n=1)) ** 0.5
-    periods = 2 * np.pi / omegas
-    periods = [0.001]
-    if etype == 'implicit':
-        o3.algorithm.Newton(osi)
-        o3.system.FullGeneral(osi)
-        o3.integrator.Newmark(osi, gamma=5./6, beta=4./9)
-        dt = 0.01
-    else:
-        o3.algorithm.Linear(osi, factor_once=True)
-        o3.system.FullGeneral(osi)
-        if etype == 'newmark_explicit':
-            o3.integrator.NewmarkExplicit(osi, gamma=0.5)
-            explicit_dt = periods[0] / np.pi / 8
-        elif etype == 'central_difference':
-            o3.integrator.CentralDifference(osi)
-            explicit_dt = periods[0] / np.pi / 16  # 0.5 is a factor of safety
-        elif etype == 'hht_explicit':
-            o3.integrator.HHTExplicit(osi, alpha=0.5)
-            explicit_dt = periods[0] / np.pi / 8
-        elif etype == 'explicit_difference':
-            o3.integrator.ExplicitDifference(osi)
-            explicit_dt = periods[0] / np.pi / 4
-        else:
-            raise ValueError(etype)
-        print('explicit_dt: ', explicit_dt)
-        dt = explicit_dt
+    o3.system.FullGeneral(osi)
+    o3.integrator.Newmark(osi, gamma=5./6, beta=4./9)
+    o3.rayleigh.Rayleigh(osi, a0, a1, 0.0, 0.0)
     o3.analysis.Transient(osi)
-    freqs = [0.5, 10]
-    xi = 0.1
-    if etype in ['newmark_explicit', 'central_difference', 'implicit']:  # Does not support modal damping
-        omega_1 = 2 * np.pi * freqs[0]
-        omega_2 = 2 * np.pi * freqs[1]
-        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-        a1 = 2 * xi / (omega_1 + omega_2)
-        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
-    else:
-        o3.ModalDamping(osi, [xi])
 
     o3.update_material_stage(osi, pm4sand, stage=0)
     # print('here1: ', o3.get_ele_response(osi, ele, 'stress'), esig_v0, csr)
@@ -95,15 +60,14 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
     o3.recorder.NodesToFile(osi, 'node_disp.txt', all_nodes, dofs=[1, 2, 3], res_type='disp')
 
     # Add static vertical pressure and stress bias
-    ttime = 30
-    time_series = o3.time_series.Path(osi, time=[0, ttime, 1e10], values=[0, 1, 1])
+    time_series = o3.time_series.Path(osi, time=[0, 100, 1e10], values=[0, 1, 1])
     o3.pattern.Plain(osi, time_series)
     o3.Load(osi, tl_node, [0, -esig_v0 / 2, 0])
     o3.Load(osi, tr_node, [0, -esig_v0 / 2, 0])
 
-    o3.analyze(osi, num_inc=int(ttime / dt) + 10, dt=dt)
+    o3.analyze(osi, num_inc=110, dt=1)
 
-    ts2 = o3.time_series.Path(osi, time=[ttime, 80000, 1e10], values=[1., 1., 1.], factor=1)
+    ts2 = o3.time_series.Path(osi, time=[110, 80000, 1e10], values=[1., 1., 1.], factor=1)
     o3.pattern.Plain(osi, ts2, fact=1.)
     y_vert = o3.get_node_disp(osi, tr_node, o3.cc.Y)
     o3.SP(osi, tl_node, dof=o3.cc.Y, dof_values=[y_vert])
@@ -112,12 +76,12 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
     # Close the drainage valves
     for node in all_nodes:
         o3.remove_sp(osi, node, dof=3)
-    o3.analyze(osi, int(5 / dt), dt=dt)
+    o3.analyze(osi, 25, dt=1)
     print('here3: ', o3.get_ele_response(osi, ele, 'stress'), esig_v0, csr)
 
     o3.update_material_stage(osi, pm4sand, stage=1)
     o3.set_parameter(osi, value=0, eles=[ele], args=['FirstCall', pm4sand.tag])
-    o3.analyze(osi, int(5 / dt), dt=dt)
+    o3.analyze(osi, 25, dt=1)
     o3.set_parameter(osi, value=sl.poissons_ratio, eles=[ele], args=['poissonRatio', pm4sand.tag])
 
     o3.extensions.to_py_file(osi)
@@ -143,10 +107,10 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
             o3.extensions.to_py_file(osi)
             export = 0
         while curr_stress < (csr - static_bias) * esig_v0:
-            o3.analyze(osi, int(0.1 / dt), dt=dt)
+            o3.analyze(osi, 1, dt=1)
             curr_stress = o3.get_ele_response(osi, ele, 'stress')[2]
             h_disp = o3.get_node_disp(osi, tr_node, o3.cc.X)
-            print(h_disp, target_disp)
+
             if h_disp >= target_disp:
                 print('STRAIN LIMIT REACHED - on load')
                 limit_reached = 1
@@ -167,7 +131,7 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
         o3.SP(osi, tr_node, dof=o3.cc.X, dof_values=[1.0])
         i = 0
         while curr_stress > -(csr + static_bias) * esig_v0:
-            o3.analyze(osi, int(0.1 / dt), dt=dt)
+            o3.analyze(osi, 1, dt=1)
             curr_stress = o3.get_ele_response(osi, ele, 'stress')[2]
             h_disp = o3.get_node_disp(osi, tr_node, o3.cc.X)
 
@@ -193,7 +157,7 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
         pat0 = o3.pattern.Plain(osi, ts0)
         o3.SP(osi, tr_node, dof=o3.cc.X, dof_values=[1.0])
         while curr_stress < static_bias * esig_v0:
-            o3.analyze(osi, int(0.1 / dt), dt=dt)
+            o3.analyze(osi, 1, dt=1)
             curr_stress = o3.get_ele_response(osi, ele, 'stress')[2]
             h_disp = o3.get_node_disp(osi, tr_node, o3.cc.X)
 
@@ -246,17 +210,18 @@ if __name__ == '__main__':
     sl.p_atm = 101.0e3
     strain_inc = 5.e-6
     csr = 0.16
-    etypes = ['explicit_difference', 'central_difference']
-    etypes = ['implicit', 'central_difference']
+
+    stress, strain, ppt, disps = run_pm4sand_et(sl, csr=csr, n_lim=20, strain_limit=0.03,
+                                                esig_v0=esig_v0, strain_inc=strain_inc, k0=k0)
+
     bf, sps = plt.subplots(nrows=2)
-    for ee, etype in enumerate(etypes):
-        stress, strain, ppt, disps = run_pm4sand_et(sl, csr=csr, n_lim=20, strain_limit=0.03,
-                                                esig_v0=esig_v0, strain_inc=strain_inc, k0=k0, etype=etype)
+    sps[0].plot(stress, label='shear')
+    sps[0].plot(ppt, label='PPT')
+    sps[1].plot(strain, stress, label='o3seespy')
 
-
-        sps[0].plot(stress, label='shear', c=cbox(ee))
-        sps[0].plot(ppt, label='PPT', c=cbox(ee))
-        sps[1].plot(strain, stress, label=etype, c=cbox(ee))
+    stresses_tcl = np.loadtxt('Cycstress.out')
+    strains_tcl = np.loadtxt('Cycstrain.out')
+    sps[1].plot(strains_tcl[:, 3], stresses_tcl[:, 3], label='Tcl', c='r', ls='--')
 
     sps[0].set_xlabel('Time [s]')
     sps[0].set_ylabel('Stress [kPa]')
@@ -264,4 +229,5 @@ if __name__ == '__main__':
     sps[1].set_ylabel('Stress [kPa]')
     sps[0].legend()
     sps[1].legend()
+    bf.savefig('Comparison-PM4Sand-tcl-vs-o3.png')
     plt.show()
