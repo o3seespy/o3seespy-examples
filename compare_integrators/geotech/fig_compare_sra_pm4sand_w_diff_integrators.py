@@ -151,6 +151,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
             explicit_dt = periods[-1] / np.pi / 64
+            explicit_dt = req_dt / 20
         else:
             raise ValueError(etype)
         print('explicit_dt: ', explicit_dt)
@@ -176,7 +177,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
         # a1 = 2 * xi / (omega_1 + omega_2)
         # o3.rayleigh.Rayleigh(osi, a0, 0, 0, 0)
-        o3.ModalDamping(osi, [xi])
+        o3.ModalDamping(osi, [xi] * n)
     o3.analysis.Transient(osi)
 
     o3.test_check.NormDispIncr(osi, tol=1.0e-7, max_iter=10)
@@ -306,11 +307,12 @@ def run():
     etypes = ['implicit'] #, 'explicit_difference']
     # etypes = ['central_difference']
     # etypes = ['implicit', 'explicit_difference']
+    etypes = ['explicit_difference']
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
         outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.03, etype=etype,
-                                    forder=forder, rec_dt=in_sig.dt, analysis_time=None)
+                                    forder=forder, rec_dt=in_sig.dt, analysis_time=1.)
         resp_dt = (outputs_exp['time'][-1] - outputs_exp['time'][0]) / (len(outputs_exp['time']) - 1)
         # resp_dt = (outputs_exp['time'][1] - outputs_exp['time'][0])
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)

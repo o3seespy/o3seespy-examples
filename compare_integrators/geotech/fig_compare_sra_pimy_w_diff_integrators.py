@@ -107,7 +107,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
 
-    n = 6
+    n = 10
     # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
     omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
     periods = 2 * np.pi / omegas
@@ -122,6 +122,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         o3.algorithm.NewtonLineSearch(osi, 0.75)
         o3.integrator.Newmark(osi, 0.5, 0.25)
+        # o3.integrator.Newmark(osi, 5./6, 4./9)  # Use numerical damping since using Modal damping
         dt = 0.001
     else:
         o3.algorithm.Linear(osi)
