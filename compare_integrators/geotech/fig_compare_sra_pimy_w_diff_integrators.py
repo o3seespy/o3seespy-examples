@@ -77,7 +77,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
-        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i] / forder))
+        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i]))
 
     # Gravity analysis
     o3.constraints.Transformation(osi)
@@ -93,9 +93,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         if hasattr(soil_mat, 'update_to_nonlinear'):
             print('Update model to nonlinear')
             soil_mat.update_to_nonlinear()
-    o3.analyze(osi, 50, 0.5)
-
-    o3.extensions.to_py_file(osi, 'ofile_sra_pimy.py')
+    if o3.analyze(osi, 50, 0.5):
+        print('Model failed')
+        return
+    print('finished nonlinear gravity analysis')
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
@@ -119,7 +120,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         dt = 0.001
     else:
         o3.algorithm.Linear(osi)
-
         if etype == 'newmark_explicit':
             o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
@@ -150,13 +150,12 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         else:
             raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
 
-    if etype in ['newmark_explicit', 'central_difference', 'implicit']:  # Does not support modal damping
+    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
         a1 = 2 * xi / (omega_1 + omega_2)
-        # o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
-        o3.rayleigh.Rayleigh(osi, a1, 0, a1, 0)
+        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
     else:
         # omega_1 = 2 * np.pi * freqs[0]
         # omega_2 = 2 * np.pi * freqs[1]
@@ -243,6 +242,8 @@ def run():
     sl.unit_dry_weight = unit_mass * 9.8
     sl.specific_gravity = 2.65
     sl.xi = 0.03  # for linear analysis
+    sl.xi_min = 0.03  # for eqlin analysis
+    sl.peak_strain = 0.1
 
     sl.o3_mat = o3.nd_material.PressureIndependMultiYield(None, 2, unit_mass / forder, sl.g_mod / forder,
                                                           sl.bulk_mod / forder, sl.cohesion / forder, 0.1,
@@ -263,6 +264,8 @@ def run():
     sl_base.unit_dry_weight = unit_mass * 9.8
     sl_base.specific_gravity = 2.65
     sl_base.xi = xi  # for linear analysis
+    sl_base.xi_min = 0.03  # for eqlin analysis
+    sl_base.peak_strain = 0.1
     e_mod = 2 * sl_base.g_mod * (1 + sl_base.poissons_ratio)
     sl_base.o3_mat = o3.nd_material.PressureIndependMultiYield(None, 2, unit_mass / forder, sl_base.g_mod / forder,
                                                           sl_base.bulk_mod / forder, sl_base.cohesion / forder, 0.1, 0.0,
@@ -274,8 +277,8 @@ def run():
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
-    sl.sra_type = 'linear'
-    sl_base.sra_type = 'linear'
+    sl.sra_type = 'hyperbolic'
+    sl_base.sra_type = 'hyperbolic'
     od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='within')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
@@ -297,7 +300,7 @@ def run():
     etypes = ['implicit']
     # etypes = ['implicit', 'central_difference']
     # etypes = ['implicit', 'newmark_explicit']
-    etypes = ['explicit_difference']
+    etypes = ['implicit', 'explicit_difference']
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
@@ -307,7 +310,6 @@ def run():
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
         surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
         sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=etype, ls=ls[i])
-        # sps[0].plot(outputs_exp['time'], outputs_exp['ACCX'][0], c=cbox(i), label=etype, ls='--')
         sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(i), ls=ls[i])
         h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
         sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(i), ls=ls[i])
@@ -316,6 +318,9 @@ def run():
     sps[1].set_xlim([0, 20])
 
     sps[0].legend(prop={'size': 6})
+    name = __file__.replace('.py', '')
+    name = name.split("fig_")[-1]
+    bf.savefig(f'figures/{name}.png', dpi=90)
     plt.show()
 
 
