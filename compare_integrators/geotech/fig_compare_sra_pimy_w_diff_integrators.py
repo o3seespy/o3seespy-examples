@@ -9,7 +9,7 @@ import liquepy as lq
 
 
 def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None, outs=None,
-                  rec_dt=0.05, etype='implicit', forder=1.0):
+                  rec_dt=None, etype='implicit', forder=1.0):
     """
     Run seismic analysis of a soil profile
 
@@ -56,18 +56,8 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
 
     # Fix base nodes
-    o3.Fix2DOF(osi, sn[-1][0], o3.cc.FREE, o3.cc.FIXED)
-    o3.Fix2DOF(osi, sn[-1][1], o3.cc.FREE, o3.cc.FIXED)
-
-    # Define dashpot nodes
-    dashpot_node_l = o3.node.Node(osi, 0, -node_depths[-1])
-    dashpot_node_2 = o3.node.Node(osi, 0, -node_depths[-1])
-    o3.Fix2DOF(osi, dashpot_node_l,  o3.cc.FIXED, o3.cc.FIXED)
-    o3.Fix2DOF(osi, dashpot_node_2, o3.cc.FREE, o3.cc.FIXED)
-
-    # define equal DOF for dashpot and soil base nodes
-    o3.EqualDOF(osi, sn[-1][0], sn[-1][1], [o3.cc.X])
-    o3.EqualDOF(osi, sn[-1][0], dashpot_node_2, [o3.cc.X])
+    o3.Fix2DOF(osi, sn[-1][0], o3.cc.FIXED, o3.cc.FIXED)
+    o3.Fix2DOF(osi, sn[-1][1], o3.cc.FIXED, o3.cc.FIXED)
 
     # define materials
     ele_thick = 1.0  # m
@@ -89,19 +79,13 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
         eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i] / forder))
 
-    # define material and element for viscous dampers
-    base_sl = sp.layer(sp.n_layers)
-    c_base = ele_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
-    dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
-    o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
-
-    # Static analysis
+    # Gravity analysis
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    o3.integrator.Newmark(osi, 0.5, 0.25)
+    o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
@@ -117,7 +101,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
 
-    n = 4
+    n = 6
     # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
     omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
     periods = 2 * np.pi / omegas
@@ -130,19 +114,18 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # o3.algorithm.Newton(osi)
         o3.system.ProfileSPD(osi)
         # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
-        # o3.algorithm.NewtonLineSearch(osi, 0.75)
-        o3.algorithm.Newton(osi)
-        o3.integrator.Newmark(osi, 0.55, 0.277)
+        o3.algorithm.NewtonLineSearch(osi, 0.75)
+        o3.integrator.Newmark(osi, 0.5, 0.25)
         dt = 0.001
     else:
         o3.algorithm.Linear(osi)
 
         if etype == 'newmark_explicit':
-            o3.system.FullGeneral(osi)
+            o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
             explicit_dt = periods[-1] / np.pi / 64
         elif etype == 'central_difference':
-            o3.system.FullGeneral(osi)
+            o3.system.ProfileSPD(osi)
             o3.integrator.CentralDifference(osi)
             explicit_dt = periods[-1] / np.pi / 64
         elif etype == 'hht_explicit':
@@ -150,8 +133,8 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             explicit_dt = periods[-1] / np.pi / 8
         elif etype == 'explicit_difference':
             # o3.opy.system('Diagonal')
-            o3.system.FullGeneral(osi)
-            # o3.system.Diagonal(osi)
+            # o3.system.FullGeneral(osi)
+            o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
             explicit_dt = periods[-1] / np.pi / 64
         else:
@@ -172,8 +155,14 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
         a1 = 2 * xi / (omega_1 + omega_2)
-        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
+        # o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
+        o3.rayleigh.Rayleigh(osi, a1, 0, a1, 0)
     else:
+        # omega_1 = 2 * np.pi * freqs[0]
+        # omega_2 = 2 * np.pi * freqs[1]
+        # a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        # a1 = 2 * xi / (omega_1 + omega_2)
+        # o3.rayleigh.Rayleigh(osi, a0, 0, 0, 0)
         o3.ModalDamping(osi, [xi])
     o3.analysis.Transient(osi)
 
@@ -209,18 +198,19 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
                     ind = np.argmin(abs(ele_depths - outs['STRS'][i]))
                     ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
     ods['time'] = o3.recorder.TimeToArrayCache(osi, dt=rec_dt)
-    # Define the dynamic analysis
-    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
-    o3.pattern.Plain(osi, ts_obj)
-    o3.Load(osi, sn[-1][0], [1., 0.])
+
+    acc_series = o3.time_series.Path(osi, dt=asig.dt, values=asig.values)
+    o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=acc_series)
 
     # Run the dynamic analysis
 
-
+    inc = 1
+    if etype != 'implicit':
+        inc = 10
     o3.record(osi)
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
-        if o3.analyze(osi, 1, dt):
+        if o3.analyze(osi, inc, dt):
             print('failed')
             break
 
@@ -243,7 +233,7 @@ def run():
     forder = 1.0e3
     sl = sm.Soil()
     sl.o3_type = 'pimy'
-    vs = 250.
+    vs = 100.
     xi = 0.03
     unit_mass = 1700.0
     sl.cohesion = 120.0e3
@@ -261,11 +251,10 @@ def run():
     assert np.isclose(vs, sl.get_shear_vel(saturated=False))
     soil_profile = sm.SoilProfile()
     soil_profile.add_layer(0, sl)
-    soil_profile.height = 30.0
 
     sl_base = sm.Soil()
     sl_base.o3_type = 'pimy'
-    vs = 450.
+    vs = 150.
     unit_mass = 1700.0
     sl_base.g_mod = vs ** 2 * unit_mass
     sl_base.poissons_ratio = 0.0
@@ -276,16 +265,18 @@ def run():
     sl_base.xi = xi  # for linear analysis
     e_mod = 2 * sl_base.g_mod * (1 + sl_base.poissons_ratio)
     sl_base.o3_mat = o3.nd_material.PressureIndependMultiYield(None, 2, unit_mass / forder, sl_base.g_mod / forder,
-                                                          sl_base.bulk_mod / forder, 480.0e3 / forder, 0.1, 0.0,
+                                                          sl_base.bulk_mod / forder, sl_base.cohesion / forder, 0.1, 0.0,
                                                           101.0e3 / forder, 0.0, 25)
-    soil_profile.add_layer(10.1, sl_base)
-    soil_profile.height = 20.0
+    soil_profile.add_layer(5.1, sl_base)
+    soil_profile.height = 10.0
     gm_scale_factor = 1.5
     record_filename = 'short_motion_dt0p01.txt'
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
-    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]), wave_field='outcrop')
+    sl.sra_type = 'linear'
+    sl_base.sra_type = 'linear'
+    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='within')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
     import matplotlib.pyplot as plt
@@ -303,9 +294,9 @@ def run():
 
     # analysis with O3
     etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
-    # etypes = ['implicit']
-    etypes = ['implicit', 'central_difference']
-    etypes = ['implicit', 'newmark_explicit']
+    etypes = ['implicit']
+    # etypes = ['implicit', 'central_difference']
+    # etypes = ['implicit', 'newmark_explicit']
     etypes = ['explicit_difference']
     ls = ['-', '--', ':', '-.']
 
@@ -316,7 +307,7 @@ def run():
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
         surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
         sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=etype, ls=ls[i])
-        sps[0].plot(outputs_exp['time'], outputs_exp['ACCX'][0], c=cbox(i), label=etype, ls='--')
+        # sps[0].plot(outputs_exp['time'], outputs_exp['ACCX'][0], c=cbox(i), label=etype, ls='--')
         sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(i), ls=ls[i])
         h = surf_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
         sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(i), ls=ls[i])

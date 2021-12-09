@@ -91,11 +91,13 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
 
     o3.update_material_stage(osi, pm4sand, stage=0)
     # print('here1: ', o3.get_ele_response(osi, ele, 'stress'), esig_v0, csr)
-
-    all_stresses_cache = o3.recorder.ElementToArrayCache(osi, ele, arg_vals=['stress'], dt=1)
-    all_strains_cache = o3.recorder.ElementToArrayCache(osi, ele, arg_vals=['strain'], dt=1)
-    nodes_cache = o3.recorder.NodesToArrayCache(osi, all_nodes, dofs=[1, 2, 3], res_type='disp', dt=1)
-    o3.recorder.NodesToFile(osi, 'node_disp.txt', all_nodes, dofs=[1, 2, 3], res_type='disp', dt=1)
+    rec_strain = strain_inc
+    strain_per_sec = strain_inc / dt * 0.01
+    rec_dt = rec_strain / strain_per_sec
+    all_stresses_cache = o3.recorder.ElementToArrayCache(osi, ele, arg_vals=['stress'], dt=rec_dt)
+    all_strains_cache = o3.recorder.ElementToArrayCache(osi, ele, arg_vals=['strain'], dt=rec_dt)
+    nodes_cache = o3.recorder.NodesToArrayCache(osi, all_nodes, dofs=[1, 2, 3], res_type='disp', dt=rec_dt)
+    o3.recorder.NodesToFile(osi, 'node_disp.txt', all_nodes, dofs=[1, 2, 3], res_type='disp', dt=rec_dt)
 
     # Add static vertical pressure and stress bias
     ttot = 10
@@ -131,14 +133,14 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
     target_disp = target_strain * h_ele
     limit_reached = 0
     export = 1
-    adj_strain_inc = strain_inc / dt * 0.01
-    print('adj_strain_inc: ', adj_strain_inc)
+
+    print('strain_per_sec: ', strain_per_sec)
     while n_cyc < n_lim:
         print('n_cyc: ', n_cyc)
         h_disp = o3.get_node_disp(osi, tr_node, o3.cc.X)
         curr_time = o3.get_time(osi)
-        steps = target_strain / adj_strain_inc
-        ts0 = o3.time_series.Path(osi, time=[curr_time, curr_time + steps, 1e10], values=[h_disp, target_disp, target_disp], factor=1)
+        secs = target_strain / strain_per_sec
+        ts0 = o3.time_series.Path(osi, time=[curr_time, curr_time + secs, 1e10], values=[h_disp, target_disp, target_disp], factor=1)
         pat0 = o3.pattern.Plain(osi, ts0)
         o3.SP(osi, tr_node, dof=o3.cc.X, dof_values=[1.0])
         curr_stress = o3.get_ele_response(osi, ele, 'stress')[2]
@@ -167,8 +169,8 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
         o3.remove(osi, ts0)
         o3.remove_sp(osi, tr_node, dof=o3.cc.X)
         # Reverse cycle
-        steps = (h_disp + target_disp) / (adj_strain_inc * h_ele)
-        rev_time = curr_time + steps
+        secs = (h_disp + target_disp) / (strain_per_sec * h_ele)
+        rev_time = curr_time + secs
         ts0 = o3.time_series.Path(osi, time=[curr_time, rev_time, 1e10],
                                    values=[h_disp, -target_disp, -target_disp], factor=1)
         print(f'time=[{curr_time, rev_time, 1e10}], values=[{h_disp, -target_disp, -target_disp}]')
@@ -198,8 +200,8 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
         o3.remove(osi, ts0)
         o3.remove_sp(osi, tr_node, dof=o3.cc.X)
         # reload cycle
-        steps = (-h_disp + target_disp) / (adj_strain_inc * h_ele)
-        rev_time = curr_time + steps
+        secs = (-h_disp + target_disp) / (strain_per_sec * h_ele)
+        rev_time = curr_time + secs
         ts0 = o3.time_series.Path(osi, time=[curr_time, rev_time, 1e10],
                                    values=[h_disp, target_disp, target_disp], factor=1)
         pat0 = o3.pattern.Plain(osi, ts0)

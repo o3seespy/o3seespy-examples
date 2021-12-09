@@ -9,7 +9,7 @@ import liquepy as lq
 
 
 def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None, outs=None,
-                  rec_dt=None, etype='implicit'):
+                  rec_dt=None, etype='implicit', forder=1.0):
     """
     Run seismic analysis of a soil profile
 
@@ -37,15 +37,9 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     node_depths = np.cumsum(sp.split["thickness"])
     node_depths = np.insert(node_depths, 0, 0)
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
-    unit_masses = sp.split["unit_mass"] / 1e3
+    unit_masses = sp.split["unit_mass"] / forder
 
     grav = 9.81
-    omega_1 = 2 * np.pi * freqs[0]
-    omega_2 = 2 * np.pi * freqs[1]
-    a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-    a1 = 2 * xi / (omega_1 + omega_2)
-
-    k0 = 0.5
 
     ele_width = min(thicknesses)
     total_soil_nodes = len(thicknesses) * 2 + 2
@@ -109,7 +103,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
-        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i]))
+        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i] / forder))
 
     # Gravity analysis
     o3.constraints.Transformation(osi)
@@ -121,9 +115,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
-    for i in range(len(soil_mats)):
-        if isinstance(soil_mats[i], o3.nd_material.PM4Sand) or isinstance(soil_mats[i], o3.nd_material.PressureIndependMultiYield):
-            o3.update_material_stage(osi, soil_mats[i], 1)
+    for i, soil_mat in enumerate(soil_mats):
+        if hasattr(soil_mat, 'update_to_nonlinear'):
+            print('Update model to nonlinear')
+            soil_mat.update_to_nonlinear()
     o3.analyze(osi, 50, 0.5)
 
     # reset time and analysis
@@ -160,10 +155,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
                     ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
 
     # Define the dynamic analysis
-    acc_series = o3.time_series.Path(osi, dt=asig.dt, values=asig.values)
-    o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=acc_series)
-
-    # Run the dynamic analysis
 
     n = 4
     # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
@@ -196,15 +187,23 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             o3.integrator.HHTExplicit(osi, alpha=0.5)
             explicit_dt = periods[-1] / np.pi / 8
         elif etype == 'explicit_difference':
-            o3.opy.system('Diagonal')
+            # o3.opy.system('Diagonal')
             # o3.system.FullGeneral(osi)
-            # o3.system.Diagonal(osi)
+            o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
             explicit_dt = periods[-1] / np.pi / 32
         else:
             raise ValueError(etype)
         print('explicit_dt: ', explicit_dt)
-        dt = explicit_dt
+        ndp = np.ceil(np.log10(explicit_dt))
+        if 0.5 * 10 ** ndp < explicit_dt:
+            dt = 0.5 * 10 ** ndp
+        elif 0.2 * 10 ** ndp < explicit_dt:
+            dt = 0.2 * 10 ** ndp
+        elif 0.1 * 10 ** ndp < explicit_dt:
+            dt = 0.1 * 10 ** ndp
+        else:
+            raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
 
     if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
         omega_1 = 2 * np.pi * freqs[0]
@@ -215,6 +214,11 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     else:
         o3.ModalDamping(osi, [xi])
     o3.analysis.Transient(osi)
+
+    acc_series = o3.time_series.Path(osi, dt=asig.dt, values=asig.values)
+    o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=acc_series)
+
+    # Run the dynamic analysis
 
     o3.analyze(osi, int(analysis_time / dt), dt)
 
@@ -261,6 +265,8 @@ def run():
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
+    sl.sra_type = 'linear'
+    sl_base.sra_type = 'linear'
     od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='within')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
@@ -283,7 +289,7 @@ def run():
 
     for i, etype in enumerate(etypes):
         outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype)
-        resp_dt = outputs_exp['time'][2] - outputs_exp['time'][1]
+        resp_dt = (outputs_exp['time'][-1] - outputs_exp['time'][0]) / (len(outputs_exp['time']) - 1)
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
         surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
         sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=etype, ls=ls[i])
