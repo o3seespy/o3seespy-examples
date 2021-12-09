@@ -131,7 +131,8 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         o3.algorithm.NewtonLineSearch(osi, 0.75)
         o3.integrator.Newmark(osi, 0.5, 0.25)
-        dt = 0.005
+        # o3.integrator.Newmark(osi, 5./6, 4./9)  # Use numerical damping since using Modal damping
+        dt = 0.001
     else:
         o3.algorithm.Linear(osi)
         if etype == 'newmark_explicit':
@@ -177,7 +178,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
         # a1 = 2 * xi / (omega_1 + omega_2)
         # o3.rayleigh.Rayleigh(osi, a0, 0, 0, 0)
-        o3.ModalDamping(osi, [xi] * n)
+        o3.ModalDamping(osi, [xi])
     o3.analysis.Transient(osi)
 
     o3.test_check.NormDispIncr(osi, tol=1.0e-7, max_iter=10)
@@ -240,13 +241,14 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             out_dict[otype] = np.array(out_dict[otype])
         else:
             out_dict[otype] = ods[otype].collect().T
-    out_dict['time'] = np.arange(0, analysis_time, dt)
+    # out_dict['time'] = np.arange(0, analysis_time, rec_dt)
 
     return out_dict
 
 
 def run():
     forder = 1.0e3
+    # forder = 1
     soil_profile = sm.SoilProfile()
 
     sl = lq.num.models.PM4Sand()
@@ -312,7 +314,7 @@ def run():
 
     for i, etype in enumerate(etypes):
         outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.03, etype=etype,
-                                    forder=forder, rec_dt=in_sig.dt, analysis_time=1.)
+                                    forder=forder, rec_dt=in_sig.dt, analysis_time=None)
         resp_dt = (outputs_exp['time'][-1] - outputs_exp['time'][0]) / (len(outputs_exp['time']) - 1)
         # resp_dt = (outputs_exp['time'][1] - outputs_exp['time'][0])
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
