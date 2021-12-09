@@ -140,7 +140,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
                 area += cur_ele_thick * (sn[0][j+1].x - sn[0][j].x)
             # def element
             nodes = [sn[i+1][j], sn[i+1][j + 1], sn[i][j + 1], sn[i][j]]  # anti-clockwise
-            eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, cur_ele_thick, 0.0, grav * unit_masses[i]))
+            eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, cur_ele_thick, 0.0, -grav))
 
     model_eff_width = area
     base_sl = sp.layer(sp.n_layers)

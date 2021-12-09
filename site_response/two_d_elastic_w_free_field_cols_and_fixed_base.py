@@ -126,7 +126,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
                 cur_ele_thick = ele_thick
             # def element
             nodes = [sn[i+1][j], sn[i+1][j + 1], sn[i][j + 1], sn[i][j]]  # anti-clockwise
-            eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, cur_ele_thick, 0.0, grav * unit_masses[i]))
+            eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, cur_ele_thick, 0.0, -grav))
 
     # Static analysis
     o3.constraints.Transformation(osi)

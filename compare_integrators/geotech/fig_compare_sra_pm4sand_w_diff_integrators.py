@@ -53,10 +53,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         sn.append([o3.node.Node(osi, 0, -node_depths[i]),
                     o3.node.Node(osi, ele_width, -node_depths[i])])
         # set x and y dofs equal for left and right nodes
-        # o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
-        if i != n_node_rows - 1:
-            o3.Fix2DOF(osi, sn[i][0], o3.cc.FIXED, o3.cc.FREE)
-            o3.Fix2DOF(osi, sn[i][-1], o3.cc.FIXED, o3.cc.FREE)
+        o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
 
     # Fix base nodes
     o3.Fix2DOF(osi, sn[-1][0], o3.cc.FIXED, o3.cc.FIXED)
@@ -80,7 +77,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
-        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i]))
+        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
 
     for i, soil_mat in enumerate(soil_mats):
         if hasattr(soil_mat, 'update_to_linear'):
@@ -95,16 +92,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.system.ProfileSPD(osi)
     o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
     o3.analysis.Transient(osi)
-    # o3.analyze(osi, 400, 1.)
     for i in range(400):
         o3.analyze(osi, 1, 0.1)
-        print('disps: ', o3.get_node_disp(osi, sn[0][0]))
+        # print('disps: ', o3.get_node_disp(osi, sn[0][0]))
 
-    print('s0:', o3.get_ele_response(osi, eles[0], 'stress'))
-    print('s1:', o3.get_ele_response(osi, eles[-1], 'stress'))
-    # for ele in eles:
-    #     print('s:', o3.get_ele_response(osi, ele, 'stress'))
-    # o3.test_check.NormUnbalance(osi, tol=1.0e-3, max_iter=30, p_flag=1)
     for i, soil_mat in enumerate(soil_mats):
         if hasattr(soil_mat, 'update_to_nonlinear'):
             print('Update model to nonlinear')
@@ -112,29 +103,20 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     for ele in eles:
         o3.set_parameter(osi, value=0, eles=[ele], args=['FirstCall', ele.mat.tag])
     print('run nonlinear gravity analysis')
-    # o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=1)
-    o3.analyze(osi, 1, 0.01)
-    print('disps: ', o3.get_node_disp(osi, sn[0][0]))
-    # for ele in eles:
-    #     print('s:', o3.get_ele_response(osi, ele, 'stress'))
-    # print('s0:', o3.get_ele_response(osi, eles[0], 'stress'))
-    # print('s1:', o3.get_ele_response(osi, eles[-1], 'stress'))
-    print('iterate')
+    verbose = 0
     for i in range(400):
         o3.analyze(osi, 1, 0.001)
-        print('disps: ', o3.get_node_disp(osi, sn[0][0]))
-        print('s0:', o3.get_ele_response(osi, eles[0], 'stress'))
-        print('s1:', o3.get_ele_response(osi, eles[-1], 'stress'))
-    if o3.analyze(osi, 50, 0.1):
-        print('Model failed')
-        return
+        if verbose:
+            print('disps: ', o3.get_node_disp(osi, sn[0][0]))
+            print('s0:', o3.get_ele_response(osi, eles[0], 'stress'))
+            print('s1:', o3.get_ele_response(osi, eles[-1], 'stress'))
     print('finished nonlinear gravity analysis')
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
 
-    n = 6
+    n = 12
     # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
     omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
     periods = 2 * np.pi / omegas
@@ -149,7 +131,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         o3.algorithm.NewtonLineSearch(osi, 0.75)
         o3.integrator.Newmark(osi, 0.5, 0.25)
-        dt = 0.001
+        dt = 0.005
     else:
         o3.algorithm.Linear(osi)
         if etype == 'newmark_explicit':
@@ -241,6 +223,8 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.record(osi)
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
+        print('s-mid:', o3.get_ele_response(osi, eles[5], 'stress'))
+        # print('s1:', o3.get_ele_response(osi, eles[-1], 'stress'))
         if o3.analyze(osi, inc, dt):
             print('failed')
             break
@@ -263,8 +247,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 def run():
     forder = 1.0e3
     soil_profile = sm.SoilProfile()
-    soil_profile.height = 30.0
-    xi = 0.03
 
     sl = lq.num.models.PM4Sand()
     soil_profile.add_layer(0.0, sl)
@@ -279,8 +261,7 @@ def run():
     sl.relative_density = 0.6
     sl.unit_dry_weight = unit_mass * 9.8
     sl.specific_gravity = 2.65
-
-    sl.xi = 0.03  # used in pysra
+    sl.xi = 0.03  # used in pysra if linear
 
     sl.o3_mat = o3.nd_material.PM4Sand(None, sl.relative_density, sl.g0_mod, sl.h_po, nu=sl.poissons_ratio,
                                  den=sl.unit_dry_mass / forder, p_atm=101.0e3 / forder)
@@ -291,7 +272,7 @@ def run():
     sl_base.g_mod = vs ** 2 * unit_mass
     sl_base.poissons_ratio = 0.0
     sl_base.unit_dry_weight = unit_mass * 9.8
-    sl_base.xi = xi  # for linear analysis
+    sl_base.xi = 0.02  # for linear analysis
 
     e_mod = 2 * sl_base.g_mod * (1 + sl_base.poissons_ratio)
     sl_base.o3_mat = o3.nd_material.ElasticIsotropic(None, e_mod=e_mod / forder, nu=sl_base.poissons_ratio, rho=sl_base.unit_dry_mass / forder)
@@ -328,7 +309,8 @@ def run():
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
-        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype, forder=forder, rec_dt=in_sig.dt)
+        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.03, etype=etype,
+                                    forder=forder, rec_dt=in_sig.dt, analysis_time=None)
         resp_dt = (outputs_exp['time'][-1] - outputs_exp['time'][0]) / (len(outputs_exp['time']) - 1)
         # resp_dt = (outputs_exp['time'][1] - outputs_exp['time'][0])
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)

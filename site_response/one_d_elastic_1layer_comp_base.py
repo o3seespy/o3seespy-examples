@@ -122,7 +122,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
 
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
-        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, grav * unit_masses[i]))
+        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
 
     # define material and element for viscous dampers
     base_sl = sp.layer(sp.n_layers)
