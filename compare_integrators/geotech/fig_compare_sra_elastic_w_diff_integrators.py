@@ -103,7 +103,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
-        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav / forder))
+        eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
 
     # Gravity analysis
     o3.constraints.Transformation(osi)
@@ -301,6 +301,9 @@ def run():
     sps[1].set_xlim([0, 20])
 
     sps[0].legend(prop={'size': 6})
+    name = __file__.replace('.py', '')
+    name = name.split("fig_")[-1]
+    bf.savefig(f'figures/{name}.png', dpi=90)
     plt.show()
 
     # assert np.isclose(o3_surf_vals, pysra_sig.values, atol=0.01, rtol=100).all()

@@ -229,7 +229,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             out_dict[otype] = np.array(out_dict[otype])
         else:
             out_dict[otype] = ods[otype].collect().T
-    # out_dict['time'] = np.arange(0, analysis_time, rec_dt)
 
     return out_dict
 
@@ -278,7 +277,7 @@ def run():
                                                           101.0e3 / forder, 0.0, 25)
     soil_profile.add_layer(5.1, sl_base)
     soil_profile.height = 10.0
-    gm_scale_factor = 1.5
+    gm_scale_factor = 0.5
     record_filename = 'short_motion_dt0p01.txt'
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 

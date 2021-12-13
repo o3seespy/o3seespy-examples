@@ -41,12 +41,8 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
     node_depths = np.cumsum(sp.split["thickness"])
     node_depths = np.insert(node_depths, 0, 0)
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
-    unit_masses = sp.split["unit_mass"] / 1e3
 
     grav = 9.81
-
-    k0 = 0.5
-    pois = k0 / (1 + k0)
 
     newmark_gamma = 0.5
     newmark_beta = 0.25
@@ -132,17 +128,18 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
 
     # Static analysis
     o3.constraints.Transformation(osi)
-    o3.test_check.NormDispIncr(osi, tol=1.0e-4, max_iter=30, p_flag=0)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
-    for i in range(len(soil_mats)):
-        if isinstance(soil_mats[i], o3.nd_material.PM4Sand) or isinstance(soil_mats[i], o3.nd_material.PressureIndependMultiYield):
-            o3.update_material_stage(osi, soil_mats[i], 1)
+    for i, soil_mat in enumerate(soil_mats):
+        if hasattr(soil_mat, 'update_to_nonlinear'):
+            print('Update model to nonlinear')
+            soil_mat.update_to_nonlinear()
     o3.analyze(osi, 50, 0.5)
 
     # reset time and analysis
@@ -177,13 +174,9 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
                 for i in range(len(outs['STRS'])):
                     ind = np.argmin(abs(ele_depths - outs['STRS'][i]))
                     ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
-
+    ods['TIME'] = o3.recorder.TimeToArrayCache(osi, dt=rec_dt)
     # Define the dynamic analysis
-    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * -1, factor=c_base)
-    o3.pattern.Plain(osi, ts_obj)
-    o3.Load(osi, sn[-1][0], [1., 0.])
 
-    # Run the dynamic analysis
     o3.algorithm.Newton(osi)
     o3.system.SparseGeneral(osi)
     o3.numberer.RCM(osi)
@@ -203,7 +196,11 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
 
     o3.analysis.Transient(osi)
 
-    o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
+    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * -1, factor=c_base)
+    o3.pattern.Plain(osi, ts_obj)
+    o3.Load(osi, sn[-1][0], [1., 0.])
+
+    o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
 
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
@@ -220,7 +217,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
             out_dict[otype] = np.array(out_dict[otype])
         else:
             out_dict[otype] = ods[otype].collect().T
-    out_dict['time'] = np.arange(0, analysis_time, rec_dt)
 
     return out_dict
 
@@ -285,13 +281,15 @@ def run():
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
+    sl.sra_type = 'linear'
+    sl_base.sra_type = 'linear'
     od = run_pysra(soil_profile, in_sig, odepths=np.array([0.0, 2.0]), wave_field='outcrop')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
     dtype = 'rayleigh'
     dtype = 'modal'
     outputs = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, analysis_dt=0.001, dtype=dtype)
-    resp_dt = outputs['time'][2] - outputs['time'][1]
+    resp_dt = (outputs['TIME'][-1] - outputs['TIME'][0]) / (len(outputs['TIME']) - 1)
     surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
 
     o3_surf_vals = np.interp(pysra_sig.time, surf_sig.time, surf_sig.values)

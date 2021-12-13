@@ -32,19 +32,15 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
     sp.gen_split(props=['shear_vel', 'unit_mass'], target=dy)
-    t_min = min(sp.split["thickness"] / sp.split['shear_vel']) / 4
-    req_dt = t_min / np.pi  # undamped case, damped case: 2 / omega * (sqrt(1+xi^2) - xi)
     thicknesses = sp.split["thickness"]
     n_node_rows = len(thicknesses) + 1
     node_depths = np.cumsum(sp.split["thickness"])
     node_depths = np.insert(node_depths, 0, 0)
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
-    unit_masses = sp.split["unit_mass"] / forder
 
     grav = 9.81
 
     ele_width = min(thicknesses)
-    total_soil_nodes = len(thicknesses) * 2 + 2
 
     # Define nodes and set boundary conditions for simple shear deformation
     # Start at top and build down?
@@ -57,35 +53,69 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
 
     # Fix base nodes
-    o3.Fix2DOF(osi, sn[-1][0], o3.cc.FIXED, o3.cc.FIXED)
-    o3.Fix2DOF(osi, sn[-1][1], o3.cc.FIXED, o3.cc.FIXED)
+    o3.Fix2DOF(osi, sn[-1][0], o3.cc.FREE, o3.cc.FIXED)
+    o3.Fix2DOF(osi, sn[-1][1], o3.cc.FREE, o3.cc.FIXED)
+
+    # Define dashpot nodes
+    dashpot_node_l = o3.node.Node(osi, 0, -node_depths[-1])
+    dashpot_node_2 = o3.node.Node(osi, 0, -node_depths[-1])
+    o3.Fix2DOF(osi, dashpot_node_l, o3.cc.FIXED, o3.cc.FIXED)
+    o3.Fix2DOF(osi, dashpot_node_2, o3.cc.FREE, o3.cc.FIXED)
+
+    # define equal DOF for dashpot and soil base nodes
+    o3.EqualDOF(osi, sn[-1][0], sn[-1][1], [o3.cc.X])
+    o3.EqualDOF(osi, sn[-1][0], dashpot_node_2, [o3.cc.X])
 
     # define materials
     ele_thick = 1.0  # m
     soil_mats = []
+    prev_args = []
+    prev_kwargs = {}
+    prev_sl_type = None
     eles = []
-    prev_id = -1
     for i in range(len(thicknesses)):
         y_depth = ele_depths[i]
 
         sl_id = sp.get_layer_index_by_depth(y_depth)
         sl = sp.layer(sl_id)
-        mat = sl.o3_mat
-        if sl_id != prev_id:
-            mat.build(osi)
+        app2mod = {}
+        if y_depth > sp.gwl:
+            umass = sl.unit_sat_mass / 1e3
+        else:
+            umass = sl.unit_dry_mass / 1e3
+        # Define material
+        sl_class = o3.nd_material.ElasticIsotropic
+        sl.e_mod = 2 * sl.g_mod * (1 - sl.poissons_ratio) / 1e3
+        app2mod['rho'] = 'unit_moist_mass'
+        overrides = {'nu': sl.poissons_ratio, 'unit_moist_mass': umass}
+
+        args, kwargs = o3.extensions.get_o3_kwargs_from_obj(sl, sl_class, custom=app2mod, overrides=overrides)
+        changed = 0
+        if sl.type != prev_sl_type or len(args) != len(prev_args) or len(kwargs) != len(prev_kwargs):
+            changed = 1
+        else:
+            for j, arg in enumerate(args):
+                if not np.isclose(arg, prev_args[j]):
+                    changed = 1
+            for pm in kwargs:
+                if pm not in prev_kwargs or not np.isclose(kwargs[pm], prev_kwargs[pm]):
+                    changed = 1
+
+        if changed:
+            mat = sl_class(osi, *args, **kwargs)
+            prev_sl_type = sl.type
+            prev_args = copy.deepcopy(args)
+            prev_kwargs = copy.deepcopy(kwargs)
+
             soil_mats.append(mat)
-            prev_id = sl_id
 
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
         eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
 
-    for i, soil_mat in enumerate(soil_mats):
-        if hasattr(soil_mat, 'update_to_linear'):
-            print('Update model to linear')
-            soil_mat.update_to_linear()
 
-    # Gravity analysis
+
+    # Static analysis
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
@@ -93,97 +123,29 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.system.ProfileSPD(osi)
     o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
     o3.analysis.Transient(osi)
-    for i in range(400):
-        o3.analyze(osi, 1, 0.1)
-        # print('disps: ', o3.get_node_disp(osi, sn[0][0]))
+    o3.analyze(osi, 40, 1.)
 
     for i, soil_mat in enumerate(soil_mats):
         if hasattr(soil_mat, 'update_to_nonlinear'):
             print('Update model to nonlinear')
             soil_mat.update_to_nonlinear()
-    for ele in eles:
-        o3.set_parameter(osi, value=0, eles=[ele], args=['FirstCall', ele.mat.tag])
-    print('run nonlinear gravity analysis')
-    verbose = 0
-    for i in range(400):
-        o3.analyze(osi, 1, 0.001)
-        if verbose:
-            print('disps: ', o3.get_node_disp(osi, sn[0][0]))
-            print('s0:', o3.get_ele_response(osi, eles[0], 'stress'))
-            print('s1:', o3.get_ele_response(osi, eles[-1], 'stress'))
-    print('finished nonlinear gravity analysis')
+    o3.analyze(osi, 50, 0.5)
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
 
-    n = 12
+    n = 10
     # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
     omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
     periods = 2 * np.pi / omegas
     print('response_periods: ', periods)
 
-    o3.constraints.Transformation(osi)
-    o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10, p_flag=2)
-    o3.numberer.RCM(osi)
-    if etype == 'implicit':
-        # o3.algorithm.Newton(osi)
-        o3.system.ProfileSPD(osi)
-        # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
-        o3.algorithm.NewtonLineSearch(osi, 0.75)
-        o3.integrator.Newmark(osi, 0.5, 0.25)
-        # o3.integrator.Newmark(osi, 5./6, 4./9)  # Use numerical damping since using Modal damping
-        dt = 0.001
-    else:
-        o3.algorithm.Linear(osi)
-        if etype == 'newmark_explicit':
-            o3.system.ProfileSPD(osi)
-            o3.integrator.NewmarkExplicit(osi, gamma=0.5)
-            explicit_dt = periods[-1] / np.pi / 64
-        elif etype == 'central_difference':
-            o3.system.ProfileSPD(osi)
-            o3.integrator.CentralDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 64
-        elif etype == 'hht_explicit':
-            o3.integrator.HHTExplicit(osi, alpha=0.5)
-            explicit_dt = periods[-1] / np.pi / 8
-        elif etype == 'explicit_difference':
-            # o3.opy.system('Diagonal')
-            # o3.system.FullGeneral(osi)
-            o3.system.Diagonal(osi)
-            o3.integrator.ExplicitDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 64
-            explicit_dt = req_dt / 10
-        else:
-            raise ValueError(etype)
-        print('explicit_dt: ', explicit_dt)
-        ndp = np.ceil(np.log10(explicit_dt))
-        if 0.5 * 10 ** ndp < explicit_dt:
-            dt = 0.5 * 10 ** ndp
-        elif 0.2 * 10 ** ndp < explicit_dt:
-            dt = 0.2 * 10 ** ndp
-        elif 0.1 * 10 ** ndp < explicit_dt:
-            dt = 0.1 * 10 ** ndp
-        else:
-            raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
-
-    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
-        omega_1 = 2 * np.pi * freqs[0]
-        omega_2 = 2 * np.pi * freqs[1]
-        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-        a1 = 2 * xi / (omega_1 + omega_2)
-        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
-    else:
-        # omega_1 = 2 * np.pi * freqs[0]
-        # omega_2 = 2 * np.pi * freqs[1]
-        # a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-        # a1 = 2 * xi / (omega_1 + omega_2)
-        # o3.rayleigh.Rayleigh(osi, a0, 0, 0, 0)
-        o3.ModalDamping(osi, [xi])
-    o3.analysis.Transient(osi)
-
-    o3.test_check.NormDispIncr(osi, tol=1.0e-7, max_iter=10)
-    rec_dt = 0.001
+    # define material and element for viscous dampers
+    base_sl = sp.layer(sp.n_layers)
+    c_base = ele_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
+    dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
+    o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
 
     ods = {}
     for otype in outs:
@@ -213,24 +175,72 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
                 for i in range(len(outs['STRS'])):
                     ind = np.argmin(abs(ele_depths - outs['STRS'][i]))
                     ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
-    ods['time'] = o3.recorder.TimeToArrayCache(osi, dt=rec_dt)
+    ods['TIME'] = o3.recorder.TimeToArrayCache(osi, dt=rec_dt)
+    # Define the dynamic analysis
 
-    acc_series = o3.time_series.Path(osi, dt=asig.dt, values=asig.values)
-    o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=acc_series)
+    o3.constraints.Transformation(osi)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
+    o3.numberer.RCM(osi)
+    if etype == 'implicit':
+        # o3.algorithm.Newton(osi)
+        o3.system.ProfileSPD(osi)
+        # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
+        o3.algorithm.NewtonLineSearch(osi, 0.75)
+        o3.integrator.Newmark(osi, 0.5, 0.25)
+        dt = 0.001
+    else:
+        o3.algorithm.Linear(osi)
+        if etype == 'newmark_explicit':
+            o3.system.ProfileSPD(osi)
+            o3.integrator.NewmarkExplicit(osi, gamma=0.5)
+            explicit_dt = periods[-1] / np.pi / 64
+        elif etype == 'central_difference':
+            o3.system.ProfileSPD(osi)
+            o3.integrator.CentralDifference(osi)
+            explicit_dt = periods[-1] / np.pi / 64
+        elif etype == 'hht_explicit':
+            o3.integrator.HHTExplicit(osi, alpha=0.5)
+            explicit_dt = periods[-1] / np.pi / 8
+        elif etype == 'explicit_difference':
+            # o3.opy.system('Diagonal')
+            # o3.system.FullGeneral(osi)
+            o3.system.Diagonal(osi)
+            o3.integrator.ExplicitDifference(osi)
+            explicit_dt = periods[-1] / np.pi / 64
+        else:
+            raise ValueError(etype)
+        print('explicit_dt: ', explicit_dt)
+        ndp = np.ceil(np.log10(explicit_dt))
+        if 0.5 * 10 ** ndp < explicit_dt:
+            dt = 0.5 * 10 ** ndp
+        elif 0.2 * 10 ** ndp < explicit_dt:
+            dt = 0.2 * 10 ** ndp
+        elif 0.1 * 10 ** ndp < explicit_dt:
+            dt = 0.1 * 10 ** ndp
+        else:
+            raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
 
-    # Run the dynamic analysis
+    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+        omega_1 = 2 * np.pi * freqs[0]
+        omega_2 = 2 * np.pi * freqs[1]
+        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        a1 = 2 * xi / (omega_1 + omega_2)
+        o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+    else:
+        omega_1 = 2 * np.pi * freqs[0]
+        omega_2 = 2 * np.pi * freqs[1]
+        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        a1 = 2 * xi / (omega_1 + omega_2)
+        o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+        # o3.ModalDamping(osi, [xi])
 
-    inc = 1
-    if etype != 'implicit':
-        inc = 10
-    o3.record(osi)
-    while o3.get_time(osi) < analysis_time:
-        print(o3.get_time(osi))
-        print('s-mid:', o3.get_ele_response(osi, eles[5], 'stress'))
-        # print('s1:', o3.get_ele_response(osi, eles[-1], 'stress'))
-        if o3.analyze(osi, inc, dt):
-            print('failed')
-            break
+    o3.analysis.Transient(osi)
+
+    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
+    o3.pattern.Plain(osi, ts_obj)
+    o3.Load(osi, sn[-1][0], [1., 0.])
+
+    o3.analyze(osi, int(analysis_time / dt), dt)
 
     o3.wipe(osi)
     out_dict = {}
@@ -242,54 +252,41 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             out_dict[otype] = np.array(out_dict[otype])
         else:
             out_dict[otype] = ods[otype].collect().T
-    # out_dict['time'] = np.arange(0, analysis_time, rec_dt)
 
     return out_dict
 
 
 def run():
-    forder = 1.0e3
-    # forder = 1
     soil_profile = sm.SoilProfile()
+    soil_profile.height = 30.0
+    xi = 0.03
 
-    sl = lq.num.models.PM4Sand()
-    soil_profile.add_layer(0.0, sl)
-    unit_mass = 16.0e3 / 9.8
-    esig_v0 = 100.0e3
-    sl.phi = 33.0
-    g_mod = 31.8e6
-    sl.poissons_ratio = 0.3
-    sl.set_g0_mod_at_v_eff_stress(esig_v0, g_mod)
-    sl.g0_mod = 316.
-    sl.h_po = 0.833
-    sl.relative_density = 0.6
+    sl = sm.Soil()
+    vs = 150.
+    unit_mass = 1700.0
+    sl.g_mod = vs ** 2 * unit_mass
+    sl.poissons_ratio = 0.0  # Note that this does not work when v>0
     sl.unit_dry_weight = unit_mass * 9.8
-    sl.specific_gravity = 2.65
-    sl.xi = 0.03  # used in pysra if linear
-
-    sl.o3_mat = o3.nd_material.PM4Sand(None, sl.relative_density, sl.g0_mod, sl.h_po, nu=sl.poissons_ratio,
-                                 den=sl.unit_dry_mass / forder, p_atm=101.0e3 / forder)
+    sl.xi = xi  # for linear analysis
+    soil_profile.add_layer(0, sl)
 
     sl_base = sm.Soil()
-    vs = 150.
+    vs = 350.
     unit_mass = 1700.0
     sl_base.g_mod = vs ** 2 * unit_mass
     sl_base.poissons_ratio = 0.0
     sl_base.unit_dry_weight = unit_mass * 9.8
-    sl_base.xi = 0.02  # for linear analysis
-
-    e_mod = 2 * sl_base.g_mod * (1 + sl_base.poissons_ratio)
-    sl_base.o3_mat = o3.nd_material.ElasticIsotropic(None, e_mod=e_mod / forder, nu=sl_base.poissons_ratio, rho=sl_base.unit_dry_mass / forder)
-    # soil_profile.add_layer(5.1, sl_base)
-    soil_profile.height = 10.0
-    gm_scale_factor = 0.5
+    sl_base.xi = xi  # for linear analysis
+    soil_profile.add_layer(19., sl_base)
+    soil_profile.height = 20.0
+    gm_scale_factor = 1.5
     record_filename = 'short_motion_dt0p01.txt'
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
-    sl.sra_type = 'hyperbolic'
+    sl.sra_type = 'linear'
     sl_base.sra_type = 'linear'
-    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='within')
+    od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='outcrop')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
     import matplotlib.pyplot as plt
@@ -307,17 +304,12 @@ def run():
 
     # analysis with O3
     etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
-    etypes = ['implicit'] #, 'explicit_difference']
-    # etypes = ['central_difference']
-    # etypes = ['implicit', 'explicit_difference']
-    etypes = ['explicit_difference']
+    etypes = ['implicit', 'explicit_difference']  # , ''
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
-        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=0.03, etype=etype,
-                                    forder=forder, rec_dt=in_sig.dt, analysis_time=None)
-        resp_dt = (outputs_exp['time'][-1] - outputs_exp['time'][0]) / (len(outputs_exp['time']) - 1)
-        # resp_dt = (outputs_exp['time'][1] - outputs_exp['time'][0])
+        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype)
+        resp_dt = (outputs_exp['TIME'][-1] - outputs_exp['TIME'][0]) / (len(outputs_exp['TIME']) - 1)
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
         surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
         sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=etype, ls=ls[i])
@@ -329,8 +321,14 @@ def run():
     sps[1].set_xlim([0, 20])
 
     sps[0].legend(prop={'size': 6})
+    name = __file__.replace('.py', '')
+    name = name.split("fig_")[-1]
+    bf.savefig(f'figures/{name}.png', dpi=90)
     plt.show()
+
+    # assert np.isclose(o3_surf_vals, pysra_sig.values, atol=0.01, rtol=100).all()
 
 
 if __name__ == '__main__':
     run()
+
