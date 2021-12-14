@@ -17,7 +17,7 @@ plt.rcParams['ps.fonttype'] = 42  # To avoid type 3 fonts
 
 
 
-def get_response(bd, asig, dtype, l_ph):
+def get_response(bd, asig, l_ph):
     """
     Compute the response of a nonlinear lollipop on a foundation with linear/nonlinear soil
     Units are N, m, s
@@ -48,25 +48,14 @@ def get_response(bd, asig, dtype, l_ph):
     ele_nodes = [bot_ss_node, top_ss_node]
 
     # Superstructure element
-    vert_ele = o3.element.ElasticBeamColumn2D(osi, ele_nodes, area=area, e_mod=e_mod, iz=iz, transf=transf)
+    elastic_sect = o3.section.Elastic2D(osi, e_mod, area, iz)
+    integ = o3.beam_integration.HingeMidpoint(osi, elastic_sect, l_ph, elastic_sect, l_ph, elastic_sect)
+    vert_ele = o3.element.ForceBeamColumn(osi, ele_nodes, transf, integ)
 
     omega = 2 * np.pi / bd.t_fixed
 
-    # define superstructure damping using rotational spring approach from Millen et al. (2017) to avoid double damping
-    if dtype == 'rot_dashpot':
-        cxx = bd.xi * 2 * np.sqrt(bd.mass_eff * bd.k_eff)
-        equiv_c_rot = cxx * (2.0 / 3) ** 2 * bd.h_eff ** 2
-        ss_rot_dashpot_mat = o3.uniaxial_material.Viscous(osi, equiv_c_rot, alpha=1.)
-        sfi_dashpot_ele = o3.element.TwoNodeLink(osi, [bot_ss_node, top_ss_node], mats=[ss_rot_dashpot_mat],
-                                            dirs=[o3.cc.DOF2D_ROTZ])
-    elif dtype == 'horz_dashpot':
-        cxx = bd.xi * 2 * np.sqrt(bd.mass_eff * bd.k_eff)
-        ss_rot_dashpot_mat = o3.uniaxial_material.Viscous(osi, cxx, alpha=1.)
-        sfi_dashpot_ele = o3.element.ZeroLength(osi, [bot_ss_node, top_ss_node], mats=[ss_rot_dashpot_mat],
-                                            dirs=[o3.cc.X])
-    else:
-        beta_k = 2 * bd.xi / omega
-        o3.rayleigh.Rayleigh(osi, 0, 0, beta_k_init=beta_k, beta_k_comm=0.0)
+    beta_k = 2 * bd.xi / omega
+    o3.rayleigh.Rayleigh(osi, 0, 0, beta_k_init=beta_k, beta_k_comm=0.0)
 
 
     # Define the input motion for the dynamic analysis
@@ -95,8 +84,6 @@ def get_response(bd, asig, dtype, l_ph):
         "chord_rots": o3.recorder.ElementToArrayCache(osi, vert_ele, arg_vals=['chordRotation']),
         "col_forces": o3.recorder.ElementToArrayCache(osi, vert_ele, arg_vals=['force']),
     }
-    if dtype in ['rot_dashpot', 'horz_dashpot']:
-        od['dashpot_force'] = o3.recorder.ElementToArrayCache(osi, sfi_dashpot_ele, arg_vals=['force'])
 
     o3.analyze(osi, int(analysis_time / analysis_dt), analysis_dt)
 
@@ -120,8 +107,6 @@ def create():
     Run an SDOF using three different damping options
 
     """
-    dtypes = ['rot_dashpot', 'horz_dashpot', 'rayleigh']
-    # dtypes = ['rayleigh']
     lss = ['-', '--', ':']
 
     bd = sm.SDOFBuilding()
@@ -136,27 +121,33 @@ def create():
     asig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=0.5)
 
     bf, sps = plt.subplots(nrows=3, figsize=(5, 8))
+    dtype = 'Column'
+    c = 0
+    outputs = get_response(bd, asig, l_ph=l_ph)
+    # Time series plots
+    sps[0].plot(outputs['time'], outputs['deck_accel'] / 9.8, c=cbox(c), lw=0.7, label=dtype, ls=lss[c])
+    sps[1].plot(outputs['hinge_rotation'] * 1e3, outputs['col_moment'] / 1e3, c=cbox(c), label=dtype, ls=lss[c])
+    sps[1].plot(outputs['hinge_rotation1'] * 1e3, outputs['col_moment'] / 1e3, c='m', label=dtype, ls=lss[c])
+    sps[1].plot(outputs['rel_deck_disp'] / bd.h_eff * 1e3, outputs['col_moment'] / 1e3, c='g',
+                label=dtype)
+    sps[2].plot(outputs['rel_deck_disp'] * 1e3, outputs['col_shear'] / 1e3, c=cbox(c), label=dtype, ls=lss[c])
 
-    for c, dtype in enumerate(dtypes):
+    ei = bd.k_eff * bd.h_eff ** 3 / 3
 
-        outputs = get_response(bd, asig, dtype=dtype, l_ph=l_ph)
-        # Time series plots
-        sps[0].plot(outputs['time'], outputs['deck_accel'] / 9.8, c=cbox(c), lw=0.7, label=dtype, ls=lss[c])
-        sps[1].plot(outputs['hinge_rotation'] * 1e3, outputs['col_moment'] / 1e3, c=cbox(c), label=dtype, ls=lss[c])
-        sps[2].plot(outputs['rel_deck_disp'] * 1e3, outputs['col_shear'] / 1e3, c=cbox(c), label=dtype, ls=lss[c])
-        if dtype == 'rot_dashpot':
-            sps[1].plot(outputs['hinge_rotation'] * 1e3, (outputs['col_moment'] - outputs['dashpot_force'][:, 2] / 2) / 1e3, c='r', label=dtype)
-            sps[2].plot(outputs['rel_deck_disp'] * 1e3, (outputs['col_shear'] - 3. / 2. * outputs['dashpot_force'][:, 2] / bd.h_eff) / 1e3, c='r', label=dtype)
+    moms = np.array([-1000e3, 1000e3])
+    k_offset = ei / (bd.h_eff * 1. / 3)  # deflection / length
+    sps[1].plot(moms / k_offset * 1e3, moms / 1e3, c='k', label='Predicted')
 
+    k_offset = ei / (bd.h_eff * 1. / 3) * 2  # end_slope * length - (deflection / length)
+    sps[1].plot(moms / k_offset * 1e3, moms / 1e3, c='r', label='Predicted - end2')
     sps[0].set_ylabel('Deck accel. [g]', fontsize=7)
     sps[0].set_xlabel('Time [s]')
-    ef.text_at_rel_pos(sps[1], 0.1, 0.9, 'Column hinge')
     sps[1].set_xlabel('Rotation [mrad]')
     sps[1].set_ylabel('Moment [kNm]')
     sps[1].set_ylabel('Shear [kN]')
     sps[1].set_xlabel('Disp. [mm]')
 
-    ef.revamp_legend(sps[0])
+    ef.revamp_legend(sps[1])
 
     ef.xy(sps[0], x_origin=True)
     ef.xy(sps[0], x_axis=True, y_axis=True)
