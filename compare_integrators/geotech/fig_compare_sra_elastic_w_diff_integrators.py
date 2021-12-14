@@ -185,22 +185,21 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
             # explicit_dt = periods[-1] / np.pi / 32
-            explicit_dt = min_dt / 2
+            explicit_dt = min_dt / 1
         elif etype == 'central_difference':
             o3.system.ProfileSPD(osi)
             o3.integrator.CentralDifference(osi)
             # explicit_dt = periods[-1] / np.pi / 32
-            explicit_dt = min_dt / 2
+            explicit_dt = min_dt / 1
         elif etype == 'explicit_difference':
             # o3.opy.system('Diagonal')
             # o3.system.FullGeneral(osi)
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
             # explicit_dt = periods[-1] / np.pi / 32
-            explicit_dt = min_dt / 2
+            explicit_dt = min_dt / 1
         else:
             raise ValueError(etype)
-        print('explicit_dt: ', explicit_dt)
         ndp = np.ceil(np.log10(explicit_dt))
         if 0.5 * 10 ** ndp < explicit_dt:
             dt = 0.5 * 10 ** ndp
@@ -210,6 +209,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             dt = 0.1 * 10 ** ndp
         else:
             raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
+        print('explicit_dt: ', explicit_dt, dt)
 
     if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
         omega_1 = 2 * np.pi * freqs[0]
