@@ -135,7 +135,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
 
-    n = 10
+    n = 14
     # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
     omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
     periods = 2 * np.pi / omegas
@@ -189,20 +189,16 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         o3.integrator.Newmark(osi, 0.5, 0.25)
         dt = 0.001
     else:
-        o3.algorithm.Linear(osi)
+        o3.algorithm.Linear(osi, factor_once=True)
         if etype == 'newmark_explicit':
             o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
             explicit_dt = periods[-1] / np.pi / 64
         elif etype == 'central_difference':
-            o3.system.ProfileSPD(osi)
+            o3.system.FullGeneral(osi)
             o3.integrator.CentralDifference(osi)
             explicit_dt = periods[-1] / np.pi / 64
-        elif etype == 'hht_explicit':
-            o3.integrator.HHTExplicit(osi, alpha=0.5)
-            explicit_dt = periods[-1] / np.pi / 8
         elif etype == 'explicit_difference':
-            # o3.opy.system('Diagonal')
             # o3.system.FullGeneral(osi)
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
@@ -311,6 +307,8 @@ def run():
         outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype)
         resp_dt = (outputs_exp['TIME'][-1] - outputs_exp['TIME'][0]) / (len(outputs_exp['TIME']) - 1)
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
+        # if etype == 'central_difference':
+        #     surf_sig = eqsig.AccSignal(surf_sig.values * 2, surf_sig.dt)
         surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
         sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=etype, ls=ls[i])
         sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(i), ls=ls[i])
