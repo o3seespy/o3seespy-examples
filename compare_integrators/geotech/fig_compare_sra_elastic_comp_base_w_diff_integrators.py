@@ -32,6 +32,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
     sp.gen_split(props=['shear_vel', 'unit_mass'], target=dy)
+    req_dt = min(sp.split["thickness"] / sp.split['shear_vel']) / 8
     thicknesses = sp.split["thickness"]
     n_node_rows = len(thicknesses) + 1
     node_depths = np.cumsum(sp.split["thickness"])
@@ -80,12 +81,12 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         sl = sp.layer(sl_id)
         app2mod = {}
         if y_depth > sp.gwl:
-            umass = sl.unit_sat_mass / 1e3
+            umass = sl.unit_sat_mass / forder
         else:
-            umass = sl.unit_dry_mass / 1e3
+            umass = sl.unit_dry_mass / forder
         # Define material
         sl_class = o3.nd_material.ElasticIsotropic
-        sl.e_mod = 2 * sl.g_mod * (1 - sl.poissons_ratio) / 1e3
+        sl.e_mod = 2 * sl.g_mod * (1 + sl.poissons_ratio) / forder
         app2mod['rho'] = 'unit_moist_mass'
         overrides = {'nu': sl.poissons_ratio, 'unit_moist_mass': umass}
 
@@ -112,8 +113,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # def element
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
         eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
-
-
 
     # Static analysis
     o3.constraints.Transformation(osi)
@@ -143,9 +142,14 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
     # define material and element for viscous dampers
     base_sl = sp.layer(sp.n_layers)
-    c_base = ele_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
+    c_base = ele_width * base_sl.unit_dry_mass / forder * sp.get_shear_vel_at_depth(sp.height)
     dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
     o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
+    # m_eff = base_sl.unit_dry_mass / forder * thicknesses[-1] * ele_width
+    # k_spring = 4 * m_eff / req_dt ** 2 / 1e3
+    # print('k_spring: ', k_spring)
+    # false_spring = o3.uniaxial_material.Elastic(osi, k_spring)
+    # o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[false_spring], dirs=[o3.cc.DOF2D_X])
 
     ods = {}
     for otype in outs:
@@ -261,7 +265,7 @@ def run():
     vs = 150.
     unit_mass = 1700.0
     sl.g_mod = vs ** 2 * unit_mass
-    sl.poissons_ratio = 0.0  # Note that this does not work when v>0
+    sl.poissons_ratio = 0.3
     sl.unit_dry_weight = unit_mass * 9.8
     sl.xi = xi  # for linear analysis
     soil_profile.add_layer(0, sl)
@@ -304,7 +308,7 @@ def run():
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
-        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype)
+        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype, forder=1e3)
         resp_dt = (outputs_exp['TIME'][-1] - outputs_exp['TIME'][0]) / (len(outputs_exp['TIME']) - 1)
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
         # if etype == 'central_difference':

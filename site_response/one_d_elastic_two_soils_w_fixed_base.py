@@ -73,7 +73,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
         sl_id = sp.get_layer_index_by_depth(y_depth)
         sl = sp.layer(sl_id)
         # Define material
-        e_mod = 2 * sl.g_mod * (1 - sl.poissons_ratio)
+        e_mod = 2 * sl.g_mod * (1 + sl.poissons_ratio)
         umass = sl.unit_dry_mass
         nu = sl.poissons_ratio
         pms = [e_mod, nu, umass]
@@ -192,7 +192,7 @@ def run():
     vs = 250.
     unit_mass = 1700.0
     sl.g_mod = vs ** 2 * unit_mass
-    sl.poissons_ratio = 0.0  # Note that this does not work when v>0
+    sl.poissons_ratio = 0.3
     sl.unit_dry_weight = unit_mass * 9.8
     sl.xi = xi  # for linear analysis
     soil_profile.add_layer(0, sl)

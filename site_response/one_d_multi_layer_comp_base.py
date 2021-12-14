@@ -126,7 +126,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
                          }
         else:
             sl_class = o3.nd_material.ElasticIsotropic
-            sl.e_mod = 2 * sl.g_mod * (1 - sl.poissons_ratio) / 1e3
+            sl.e_mod = 2 * sl.g_mod * (1 + sl.poissons_ratio) / 1e3
             app2mod['rho'] = 'unit_moist_mass'
             overrides = {'nu': sl.poissons_ratio, 'unit_moist_mass': umass}
 
@@ -254,7 +254,7 @@ def run():
     sl.cohesion = 120.0e3
     sl.phi = 0.0
     sl.g_mod = vs ** 2 * unit_mass
-    sl.poissons_ratio = 0.0
+    sl.poissons_ratio = 0.3
     sl.unit_dry_weight = unit_mass * 9.8
     sl.specific_gravity = 2.65
     sl.xi = 0.03  # for linear analysis
@@ -268,7 +268,7 @@ def run():
     vs = 450.
     unit_mass = 1700.0
     sl_base.g_mod = vs ** 2 * unit_mass
-    sl_base.poissons_ratio = 0.0
+    sl_base.poissons_ratio = 0.3
     sl_base.cohesion = 120.0e3
     sl_base.phi = 0.0
     sl_base.unit_dry_weight = unit_mass * 9.8
