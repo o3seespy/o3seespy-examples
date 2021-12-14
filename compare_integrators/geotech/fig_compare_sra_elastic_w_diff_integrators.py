@@ -185,19 +185,19 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
             # explicit_dt = periods[-1] / np.pi / 32
-            explicit_dt = min_dt / 4
+            explicit_dt = min_dt / 2
         elif etype == 'central_difference':
             o3.system.ProfileSPD(osi)
             o3.integrator.CentralDifference(osi)
             # explicit_dt = periods[-1] / np.pi / 32
-            explicit_dt = min_dt / 4
+            explicit_dt = min_dt / 2
         elif etype == 'explicit_difference':
             # o3.opy.system('Diagonal')
             # o3.system.FullGeneral(osi)
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
             # explicit_dt = periods[-1] / np.pi / 32
-            explicit_dt = min_dt / 4
+            explicit_dt = min_dt / 2
         else:
             raise ValueError(etype)
         print('explicit_dt: ', explicit_dt)
