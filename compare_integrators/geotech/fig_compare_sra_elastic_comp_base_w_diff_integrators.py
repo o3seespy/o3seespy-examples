@@ -32,7 +32,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
     sp.gen_split(props=['shear_vel', 'unit_mass'], target=dy)
-    req_dt = min(sp.split["thickness"] / sp.split['shear_vel']) / 8
     thicknesses = sp.split["thickness"]
     n_node_rows = len(thicknesses) + 1
     node_depths = np.cumsum(sp.split["thickness"])
@@ -145,11 +144,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     c_base = ele_width * base_sl.unit_dry_mass / forder * sp.get_shear_vel_at_depth(sp.height)
     dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
     o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
-    # m_eff = base_sl.unit_dry_mass / forder * thicknesses[-1] * ele_width
-    # k_spring = 4 * m_eff / req_dt ** 2 / 1e3
-    # print('k_spring: ', k_spring)
-    # false_spring = o3.uniaxial_material.Elastic(osi, k_spring)
-    # o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[false_spring], dirs=[o3.cc.DOF2D_X])
 
     ods = {}
     for otype in outs:
@@ -181,6 +175,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
                     ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
     ods['TIME'] = o3.recorder.TimeToArrayCache(osi, dt=rec_dt)
     # Define the dynamic analysis
+    o3.wipe_analysis(osi)
 
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
@@ -219,20 +214,15 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             dt = 0.1 * 10 ** ndp
         else:
             raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
-
-    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+    use_modal_damping = 0
+    if not use_modal_damping or etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
         a1 = 2 * xi / (omega_1 + omega_2)
         o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
     else:
-        omega_1 = 2 * np.pi * freqs[0]
-        omega_2 = 2 * np.pi * freqs[1]
-        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-        a1 = 2 * xi / (omega_1 + omega_2)
-        o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
-        # o3.ModalDamping(osi, [xi])
+        o3.ModalDamping(osi, [xi])
 
     o3.analysis.Transient(osi)
 
@@ -321,6 +311,9 @@ def run():
 
     sps[2].axhline(1, c='k', ls='--')
     sps[1].set_xlim([0, 20])
+
+    import engformat as ef
+    ef.text_at_rel_pos(sps[2], 0.6, 0.8, 'Explicit Diff. is approx. half ???')
 
     sps[0].legend(prop={'size': 6})
     name = __file__.replace('.py', '')

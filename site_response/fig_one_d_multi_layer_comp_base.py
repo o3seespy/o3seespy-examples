@@ -1,20 +1,18 @@
 import o3seespy as o3
-
 import copy
 import sfsimodels as sm
-import json
 import numpy as np
 import eqsig
 import all_paths as ap
 # for linear analysis comparison
 import liquepy as lq
-import pysra
-import json
 
 
-def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None, rec_dt=None):
+def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None,
+                  rec_dt=None):
     """
     Run seismic analysis of a soil profile
+
     Parameters
     ----------
     sp: sfsimodels.SoilProfile object
@@ -41,7 +39,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     node_depths = np.cumsum(sp.split["thickness"])
     node_depths = np.insert(node_depths, 0, 0)
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
-    unit_masses = sp.split["unit_mass"] / 1e3
 
     grav = 9.81
     omega_1 = 2 * np.pi * freqs[0]
@@ -56,7 +53,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     newmark_beta = 0.25
 
     ele_width = min(thicknesses)
-    total_soil_nodes = len(thicknesses) * 2 + 2
 
     # Define nodes and set boundary conditions for simple shear deformation
     # Start at top and build down?
@@ -75,7 +71,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     # Define dashpot nodes
     dashpot_node_l = o3.node.Node(osi, 0, -node_depths[-1])
     dashpot_node_2 = o3.node.Node(osi, 0, -node_depths[-1])
-    o3.Fix2DOF(osi, dashpot_node_l,  o3.cc.FIXED, o3.cc.FIXED)
+    o3.Fix2DOF(osi, dashpot_node_l, o3.cc.FIXED, o3.cc.FIXED)
     o3.Fix2DOF(osi, dashpot_node_2, o3.cc.FREE, o3.cc.FIXED)
 
     # define equal DOF for dashpot and soil base nodes
@@ -85,8 +81,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     # define materials
     ele_thick = 1.0  # m
     soil_mats = []
-    strains = np.logspace(-6, -0.5, 16)
-    ref_strain = 0.005
     prev_args = []
     prev_kwargs = {}
     prev_sl_type = None
@@ -154,32 +148,33 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
         eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
 
+    # Static analysis
+    o3.constraints.Transformation(osi)
+    o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
+    o3.algorithm.Newton(osi)
+    o3.numberer.RCM(osi)
+    o3.system.ProfileSPD(osi)
+    o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
+    o3.analysis.Transient(osi)
+    o3.analyze(osi, 40, 1.)
+
+
+    for i, soil_mat in enumerate(soil_mats):
+        if hasattr(soil_mat, 'update_to_nonlinear'):
+            print('Update model to nonlinear')
+            soil_mat.update_to_nonlinear()
+    o3.analyze(osi, 50, 0.5)
+    o3.extensions.to_py_file(osi, 'ofile_sra_pimy_og.py')
+
+    # reset time and analysis
+    o3.set_time(osi, 0.0)
+    o3.wipe_analysis(osi)
+
     # define material and element for viscous dampers
     base_sl = sp.layer(sp.n_layers)
     c_base = ele_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
     dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
     o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
-
-    # Static analysis
-    o3.constraints.Transformation(osi)
-    o3.test_check.NormDispIncr(osi, tol=1.0e-4, max_iter=30, p_flag=0)
-    o3.algorithm.Newton(osi)
-    o3.numberer.RCM(osi)
-    o3.system.ProfileSPD(osi)
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
-    o3.analysis.Transient(osi)
-    o3.analyze(osi, 40, 1.)
-
-    o3.extensions.to_py_file(osi, 'ofile_sra_pimy_og.py')
-
-    for i in range(len(soil_mats)):
-        if isinstance(soil_mats[i], o3.nd_material.PM4Sand) or isinstance(soil_mats[i], o3.nd_material.PressureIndependMultiYield):
-            o3.update_material_stage(osi, soil_mats[i], 1)
-    o3.analyze(osi, 50, 0.5)
-
-    # reset time and analysis
-    o3.set_time(osi, 0.0)
-    o3.wipe_analysis(osi)
 
     ods = {}
     for otype in outs:
@@ -209,11 +204,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
                 for i in range(len(outs['STRS'])):
                     ind = np.argmin(abs(ele_depths - outs['STRS'][i]))
                     ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
-
-    # Define the dynamic analysis
-    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
-    o3.pattern.Plain(osi, ts_obj)
-    o3.Load(osi, sn[-1][0], [1., 0.])
+    ods['time'] = o3.recorder.TimeToArrayCache(osi, dt=rec_dt)
 
     # Run the dynamic analysis
     o3.algorithm.Newton(osi)
@@ -223,12 +214,18 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
     o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
     o3.analysis.Transient(osi)
-
     o3.test_check.EnergyIncr(osi, tol=1.0e-7, max_iter=10)
+
+    # Define the dynamic analysis
+    ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
+    o3.pattern.Plain(osi, ts_obj)
+    o3.Load(osi, sn[-1][0], [1., 0.])
+
+
     o3.record(osi)
     while o3.get_time(osi) < analysis_time:
         print(o3.get_time(osi))
-        if o3.analyze(osi, 1, analysis_dt):
+        if o3.analyze(osi, 10, analysis_dt):
             print('failed')
             break
     o3.wipe(osi)
@@ -241,7 +238,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
             out_dict[otype] = np.array(out_dict[otype])
         else:
             out_dict[otype] = ods[otype].collect().T
-    out_dict['time'] = np.arange(0, analysis_time, rec_dt)
 
     return out_dict
 
@@ -258,6 +254,7 @@ def run():
     sl.unit_dry_weight = unit_mass * 9.8
     sl.specific_gravity = 2.65
     sl.xi = 0.03  # for linear analysis
+    sl.sra_type = 'linear'
     assert np.isclose(vs, sl.get_shear_vel(saturated=False))
     soil_profile = sm.SoilProfile()
     soil_profile.add_layer(0, sl)
@@ -274,6 +271,7 @@ def run():
     sl_base.unit_dry_weight = unit_mass * 9.8
     sl_base.specific_gravity = 2.65
     sl_base.xi = 0.03  # for linear analysis
+    sl_base.sra_type = 'linear'
     soil_profile.add_layer(10.1, sl_base)
     soil_profile.height = 20.0
     gm_scale_factor = 1.5
@@ -319,6 +317,9 @@ def run():
         sps[2].plot(pysra_surf_sig.smooth_fa_frequencies, pysra_h, c=cbox(1))
         sps[2].axhline(1, c='k', ls='--')
         sps[0].legend()
+        name = __file__.replace('.py', '')
+        name = name.split("fig_")[-1]
+        bf.savefig(f'figs/{name}.png', dpi=90)
         plt.show()
 
     assert np.isclose(o3_surf_vals, pysra_surf_sig.values, atol=0.01, rtol=100).all()
