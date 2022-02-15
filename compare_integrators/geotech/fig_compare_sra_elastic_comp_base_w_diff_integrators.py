@@ -31,13 +31,22 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
-    sp.gen_split(props=['shear_vel', 'unit_mass'], target=dy)
+    sp.gen_split(props=['shear_vel', 'unit_mass', 'g_mod', 'poissons_ratio'], target=dy)
     thicknesses = sp.split["thickness"]
     n_node_rows = len(thicknesses) + 1
     node_depths = np.cumsum(sp.split["thickness"])
     node_depths = np.insert(node_depths, 0, 0)
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
-
+    rho = sp.split['unit_mass']
+    g_mod = sp.split['g_mod']
+    poi = sp.split['poissons_ratio']
+    lam = 2 * g_mod * poi / (1 - 2 * poi)
+    mu = g_mod
+    v_dil = np.sqrt((lam + 2 * mu) / rho)
+    ele_h = sp.split['thickness']
+    dts = ele_h / v_dil
+    min_dt = min(dts)
+    print('min_dt: ', min_dt)
     grav = 9.81
 
     ele_width = min(thicknesses)
@@ -113,7 +122,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
         eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
 
-    # Static analysis
+    # Gravity analysis
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
@@ -122,12 +131,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
-
-    for i, soil_mat in enumerate(soil_mats):
-        if hasattr(soil_mat, 'update_to_nonlinear'):
-            print('Update model to nonlinear')
-            soil_mat.update_to_nonlinear()
-    o3.analyze(osi, 50, 0.5)
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
@@ -181,9 +184,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
     o3.numberer.RCM(osi)
     if etype == 'implicit':
-        # o3.algorithm.Newton(osi)
         o3.system.ProfileSPD(osi)
-        # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         o3.algorithm.NewtonLineSearch(osi, 0.75)
         o3.integrator.Newmark(osi, 0.5, 0.25)
         dt = 0.001
@@ -192,19 +193,18 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         if etype == 'newmark_explicit':
             o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
-            explicit_dt = periods[-1] / np.pi / 64
+            explicit_dt = min_dt / 1
         elif etype == 'central_difference':
             o3.system.FullGeneral(osi)
             o3.integrator.CentralDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 64
+            explicit_dt = min_dt / 1
         elif etype == 'explicit_difference':
             # o3.system.FullGeneral(osi)
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 64
+            explicit_dt = min_dt / 2  # need reduced time step due to Rayleigh damping
         else:
             raise ValueError(etype)
-        print('explicit_dt: ', explicit_dt)
         ndp = np.ceil(np.log10(explicit_dt))
         if 0.5 * 10 ** ndp < explicit_dt:
             dt = 0.5 * 10 ** ndp
@@ -214,16 +214,17 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             dt = 0.1 * 10 ** ndp
         else:
             raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
+        print('explicit_dt: ', explicit_dt, dt)
+
     use_modal_damping = 0
     if not use_modal_damping or etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
         a1 = 2 * xi / (omega_1 + omega_2)
-        o3.rayleigh.Rayleigh(osi, a0, a1, 0, 0)
+        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
     else:
         o3.ModalDamping(osi, [xi])
-
     o3.analysis.Transient(osi)
 
     ts_obj = o3.time_series.Path(osi, dt=asig.dt, values=asig.velocity * 1, factor=c_base)
@@ -295,7 +296,7 @@ def run():
     # analysis with O3
     etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
     etypes = ['implicit', 'explicit_difference']  # , ''
-    etypes = ['explicit_difference']
+    # etypes = ['explicit_difference']
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
@@ -319,7 +320,7 @@ def run():
     sps[0].legend(prop={'size': 6})
     name = __file__.replace('.py', '')
     name = name.split("fig_")[-1]
-    # bf.savefig(f'figures/{name}.png', dpi=90)
+    bf.savefig(f'figs/{name}.png', dpi=90)
     plt.show()
 
     # assert np.isclose(o3_surf_vals, pysra_sig.values, atol=0.01, rtol=100).all()

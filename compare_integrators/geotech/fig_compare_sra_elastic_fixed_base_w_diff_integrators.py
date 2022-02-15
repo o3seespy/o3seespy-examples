@@ -171,7 +171,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         o3.integrator.Newmark(osi, 0.5, 0.25)
         dt = 0.001
     else:
-        o3.algorithm.Linear(osi)
+        o3.algorithm.Linear(osi, factor_once=True)
         if etype == 'newmark_explicit':
             o3.system.ProfileSPD(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)

@@ -47,13 +47,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
     a1 = 2 * xi / (omega_1 + omega_2)
 
-    k0 = 0.5
-
     newmark_gamma = 0.5
     newmark_beta = 0.25
 
     ele_width = min(thicknesses)
-    total_soil_nodes = len(thicknesses) * 2 + 2
 
     # Define nodes and set boundary conditions for simple shear deformation
     # Start at top and build down?
@@ -122,14 +119,9 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    o3.integrator.Newmark(osi, newmark_gamma, newmark_beta)
+    o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
-
-    for i in range(len(soil_mats)):
-        if isinstance(soil_mats[i], o3.nd_material.PM4Sand) or isinstance(soil_mats[i], o3.nd_material.PressureIndependMultiYield):
-            o3.update_material_stage(osi, soil_mats[i], 1)
-    o3.analyze(osi, 50, 0.5)
 
     # reset time and analysis
     o3.set_time(osi, 0.0)
@@ -221,8 +213,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
 
 def run():
-    soil_profile = sm.SoilProfile()
-    soil_profile.height = 30.0
     xi = 0.03
 
     sl = sm.Soil()
@@ -232,8 +222,6 @@ def run():
     sl.poissons_ratio = 0.3
     sl.unit_dry_weight = unit_mass * 9.8
     sl.xi = xi  # for linear analysis
-    sl.sra_type = 'linear'
-    soil_profile.add_layer(0, sl)
 
     sl_base = sm.Soil()
     vs = 350.
@@ -241,15 +229,18 @@ def run():
     sl_base.g_mod = vs ** 2 * unit_mass
     sl_base.poissons_ratio = 0.3
     sl_base.unit_dry_weight = unit_mass * 9.8
-    sl_base.sra_type = 'linear'
     sl_base.xi = xi  # for linear analysis
-    soil_profile.add_layer(19., sl_base)
+    soil_profile = sm.SoilProfile()
+    soil_profile.add_layer(0, sl)
+    soil_profile.add_layer(10., sl_base)
     soil_profile.height = 20.0
-    gm_scale_factor = 1.5
+    gm_scale_factor = 1.0
     record_filename = 'short_motion_dt0p01.txt'
     in_sig = eqsig.load_asig(ap.MODULE_DATA_PATH + 'gms/' + record_filename, m=gm_scale_factor)
 
     # analysis with pysra
+    sl.sra_type = 'linear'
+    sl_base.sra_type = 'linear'
     od = lq.sra.run_pysra(soil_profile, in_sig, odepths=np.array([0.0]), wave_field='within')
     pysra_sig = eqsig.AccSignal(od['ACCX'][0], in_sig.dt)
 
@@ -262,9 +253,9 @@ def run():
     sps[0].plot(in_sig.time, in_sig.values, c='k', label='Input')
     sps[0].plot(pysra_sig.time, pysra_sig.values, c='r', label='pysra')
     sps[1].plot(in_sig.fa_frequencies, abs(in_sig.fa_spectrum), c='k')
-    sps[1].plot(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c='r')
+    sps[1].semilogx(pysra_sig.fa_frequencies, abs(pysra_sig.fa_spectrum), c='r')
     pysra_h = pysra_sig.smooth_fa_spectrum / in_sig.smooth_fa_spectrum
-    sps[2].plot(pysra_sig.smooth_fa_frequencies, pysra_h, c='r')
+    sps[2].semilogx(pysra_sig.smooth_fa_frequencies, pysra_h, c='r')
 
     # analysis with O3
     dtypes = ['rayleigh', 'modal']  # ,, 'central_difference', 'newmark_explicit',
@@ -278,7 +269,9 @@ def run():
         outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, dtype=dtype)
         print("--- %s seconds ---" % (time.time() - start_time))
         resp_dt = outputs_exp['time'][2] - outputs_exp['time'][1]
-        surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
+        abs_surf_sig = outputs_exp['ACCX'][0] + np.interp(np.arange(len(outputs_exp['ACCX'][0])) * resp_dt, in_sig.time,
+                                                          in_sig.values)
+        surf_sig = eqsig.AccSignal(abs_surf_sig, resp_dt)
         surf_sig.smooth_fa_frequencies = in_sig.fa_frequencies[1:]
         sps[0].plot(surf_sig.time, surf_sig.values, c=cbox(i), label=dtype, ls=ls[i])
         sps[1].plot(surf_sig.fa_frequencies, abs(surf_sig.fa_spectrum), c=cbox(i), ls=ls[i])
@@ -286,7 +279,6 @@ def run():
         sps[2].plot(surf_sig.smooth_fa_frequencies, h, c=cbox(i), ls=ls[i])
 
         sps[2].axhline(1, c='k', ls='--')
-    sps[1].set_xlim([0, 20])
 
     sps[0].legend(prop={'size': 6})
     name = __file__.replace('.py', '')

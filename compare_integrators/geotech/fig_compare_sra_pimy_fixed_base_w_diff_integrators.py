@@ -319,7 +319,7 @@ def run():
     name = __file__.replace('.py', '')
     name = name.split("fig_")[-1]
     bf.suptitle(name)
-    bf.savefig(f'figures/{name}.png', dpi=90)
+    bf.savefig(f'figs/{name}.png', dpi=90)
     plt.show()
 
 
