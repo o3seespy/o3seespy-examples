@@ -9,7 +9,7 @@ import liquepy as lq
 
 
 def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5, analysis_time=None, outs=None,
-                  rec_dt=None):
+                  rec_dt=None, forder=1.0e3):
     """
     Run seismic analysis of a soil profile
 
@@ -92,35 +92,36 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
         sl = sp.layer(sl_id)
         app2mod = {}
         if y_depth > sp.gwl:
-            umass = sl.unit_sat_mass / 1e3
+            umass = sl.unit_sat_mass / forder
         else:
-            umass = sl.unit_dry_mass / 1e3
+            umass = sl.unit_dry_mass / forder
+        p_atm = 101e3 / forder
         # Define material
         if sl.o3_type == 'pm4sand':
             sl_class = o3.nd_material.PM4Sand
-            overrides = {'nu': pois, 'p_atm': 101, 'unit_moist_mass': umass}
+            overrides = {'nu': pois, 'p_atm': p_atm, 'unit_moist_mass': umass}
             app2mod = sl.app2mod
         elif sl.o3_type == 'sdmodel':
             sl_class = o3.nd_material.StressDensity
-            overrides = {'nu': pois, 'p_atm': 101, 'unit_moist_mass': umass}
+            overrides = {'nu': pois, 'p_atm': p_atm, 'unit_moist_mass': umass}
             app2mod = sl.app2mod
         elif sl.o3_type == 'pimy':
             sl_class = o3.nd_material.PressureIndependMultiYield
-            overrides = {'nu': pois, 'p_atm': 80,
+            overrides = {'nu': pois, 'p_atm': p_atm,
                          'rho': umass,
                          'nd': 2.0,
-                         'g_mod_ref': sl.g_mod / 1e3,
-                         'bulk_mod_ref': sl.bulk_mod / 1e3,
+                         'g_mod_ref': sl.g_mod / forder,
+                         'bulk_mod_ref': sl.bulk_mod / forder,
                          'peak_strain': 0.05,
-                         'cohesion': sl.cohesion / 1e3,
+                         'cohesion': sl.cohesion / forder,
                          'phi': sl.phi,
-                         'p_ref': 101,
+                         'p_ref': 101e3 / forder,
                          'd': 0.0,
                          'n_surf': 25
                          }
         else:
             sl_class = o3.nd_material.ElasticIsotropic
-            sl.e_mod = 2 * sl.g_mod * (1 + sl.poissons_ratio) / 1e3
+            sl.e_mod = 2 * sl.g_mod * (1 + sl.poissons_ratio) / forder
             app2mod['rho'] = 'unit_moist_mass'
             overrides = {'nu': sl.poissons_ratio, 'unit_moist_mass': umass}
 
@@ -158,7 +159,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
-
     for i, soil_mat in enumerate(soil_mats):
         if hasattr(soil_mat, 'update_to_nonlinear'):
             print('Update model to nonlinear')
@@ -172,7 +172,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
 
     # define material and element for viscous dampers
     base_sl = sp.layer(sp.n_layers)
-    c_base = ele_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
+    c_base = ele_width * base_sl.unit_dry_mass / forder * sp.get_shear_vel_at_depth(sp.height)
     dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
     o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
 
@@ -221,13 +221,13 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, analysis_dt=0.001, dy=0.5,
     o3.pattern.Plain(osi, ts_obj)
     o3.Load(osi, sn[-1][0], [1., 0.])
 
-
-    o3.record(osi)
-    while o3.get_time(osi) < analysis_time:
-        print(o3.get_time(osi))
-        if o3.analyze(osi, 10, analysis_dt):
-            print('failed')
-            break
+    o3.analyze(osi, int(analysis_time / analysis_dt), analysis_dt)
+    # o3.record(osi)
+    # while o3.get_time(osi) < analysis_time:
+    #     print(o3.get_time(osi))
+    #     if o3.analyze(osi, 10, analysis_dt):
+    #         print('failed')
+    #         break
     o3.wipe(osi)
     out_dict = {}
     for otype in ods:

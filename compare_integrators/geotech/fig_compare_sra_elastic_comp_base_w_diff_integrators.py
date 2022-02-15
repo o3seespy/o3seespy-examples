@@ -295,6 +295,7 @@ def run():
     # analysis with O3
     etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
     etypes = ['implicit', 'explicit_difference']  # , ''
+    etypes = ['explicit_difference']
     ls = ['-', '--', ':', '-.']
 
     for i, etype in enumerate(etypes):
@@ -318,7 +319,7 @@ def run():
     sps[0].legend(prop={'size': 6})
     name = __file__.replace('.py', '')
     name = name.split("fig_")[-1]
-    bf.savefig(f'figures/{name}.png', dpi=90)
+    # bf.savefig(f'figures/{name}.png', dpi=90)
     plt.show()
 
     # assert np.isclose(o3_surf_vals, pysra_sig.values, atol=0.01, rtol=100).all()

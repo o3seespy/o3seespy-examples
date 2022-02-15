@@ -221,6 +221,7 @@ def run():
     sl.g_mod = vs ** 2 * unit_mass
     sl.poissons_ratio = 0.3
     sl.unit_dry_weight = unit_mass * 9.8
+    sl.sra_type = 'linear'
     sl.xi = 0.01  # for linear analysis
     soil_profile.add_layer(0, sl)
 
@@ -230,6 +231,7 @@ def run():
     sl_base.g_mod = vs ** 2 * unit_mass
     sl_base.poissons_ratio = 0.3
     sl_base.unit_dry_weight = unit_mass * 9.8
+    sl_base.sra_type = 'linear'
     sl_base.xi = 0.01  # for linear analysis
     soil_profile.add_layer(19., sl_base)
     soil_profile.height = 20.0
@@ -294,6 +296,10 @@ def run():
 
     sps[2].axhline(1, c='k', ls='--')
     sps[0].legend()
+    name = __file__.replace('.py', '')
+    name = name.split("fig_")[-1]
+    bf.suptitle(name)
+    bf.savefig(f'figs/{name}.png', dpi=90)
     plt.show()
 
 
