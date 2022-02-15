@@ -58,22 +58,19 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # Establish left and right nodes
         sn.append([o3.node.Node(osi, 0, -node_depths[i]),
                     o3.node.Node(osi, ele_width, -node_depths[i])])
-        # set x and y dofs equal for left and right nodes
-        o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
+        if i != n_node_rows - 1:
+            # set x and y dofs equal for left and right nodes
+            o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
 
     # Fix base nodes
     o3.Fix2DOF(osi, sn[-1][0], o3.cc.FREE, o3.cc.FIXED)
     o3.Fix2DOF(osi, sn[-1][1], o3.cc.FREE, o3.cc.FIXED)
+    o3.EqualDOF(osi, sn[-1][0], sn[-1][1], [o3.cc.X])
 
     # Define dashpot nodes
-    dashpot_node_l = o3.node.Node(osi, 0, -node_depths[-1])
-    dashpot_node_2 = o3.node.Node(osi, 0, -node_depths[-1])
-    o3.Fix2DOF(osi, dashpot_node_l, o3.cc.FIXED, o3.cc.FIXED)
-    o3.Fix2DOF(osi, dashpot_node_2, o3.cc.FREE, o3.cc.FIXED)
-
-    # define equal DOF for dashpot and soil base nodes
-    o3.EqualDOF(osi, sn[-1][0], sn[-1][1], [o3.cc.X])
-    o3.EqualDOF(osi, sn[-1][0], dashpot_node_2, [o3.cc.X])
+    dashpot_node_1 = o3.node.Node(osi, 0, -node_depths[-1])
+    dashpot_node_2 = sn[-1][0]
+    o3.Fix2DOF(osi, dashpot_node_1, o3.cc.FIXED, o3.cc.FIXED)
 
     # define materials
     ele_thick = 1.0  # m
@@ -146,7 +143,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     base_sl = sp.layer(sp.n_layers)
     c_base = ele_width * base_sl.unit_dry_mass / forder * sp.get_shear_vel_at_depth(sp.height)
     dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
-    o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
+    o3.element.ZeroLength(osi, [dashpot_node_1, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
 
     ods = {}
     for otype in outs:
@@ -295,7 +292,7 @@ def run():
 
     # analysis with O3
     etypes = ['implicit', 'explicit_difference', 'central_difference', 'newmark_explicit']
-    etypes = ['implicit', 'explicit_difference']  # , ''
+    # etypes = ['implicit', 'explicit_difference']  # , ''
     # etypes = ['explicit_difference']
     ls = ['-', '--', ':', '-.']
 
@@ -314,12 +311,10 @@ def run():
     sps[2].axhline(1, c='k', ls='--')
     sps[1].set_xlim([0, 20])
 
-    import engformat as ef
-    ef.text_at_rel_pos(sps[2], 0.6, 0.8, 'Explicit Diff. is approx. half ???')
-
     sps[0].legend(prop={'size': 6})
     name = __file__.replace('.py', '')
     name = name.split("fig_")[-1]
+    bf.suptitle(name)
     bf.savefig(f'figs/{name}.png', dpi=90)
     plt.show()
 

@@ -98,9 +98,9 @@ def run():
 
     etypes = ['implicit', 'central_difference', 'newmark_explicit', 'explicit_difference']  # ,
     etype = 'central_difference'
-    xis = [0.05, 0.1, 0.2, 0.5, 0.5]
-    scale_dts = [1, 1, 1, 1, 0.5]
-    ls = ['-', '--', ':', '--', '-.']
+    xis = [0.05, 0.1, 0.2, 0.5, 0.5, 0.05]
+    scale_dts = [1, 1, 1, 1, 0.5, 1.5]
+    ls = ['-', '--', ':', '--', '-.', ':']
     bf, ax = plt.subplots()
     for i, xi in enumerate(xis):
         time, roof_d = run_analysis(etype, acc_signal, xi, scale_dts[i])

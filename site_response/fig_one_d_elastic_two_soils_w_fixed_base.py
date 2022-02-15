@@ -98,12 +98,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
-    for i, soil_mat in enumerate(soil_mats):
-        if hasattr(soil_mat, 'update_to_nonlinear'):
-            print('Update model to nonlinear')
-            soil_mat.update_to_nonlinear()
-    o3.analyze(osi, 50, 0.5)
-
     # reset time and analysis
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
@@ -118,23 +112,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
                 for i in range(len(outs['ACCX'])):
                     ind = np.argmin(abs(node_depths - outs['ACCX'][i]))
                     ods['ACCX'].append(o3.recorder.NodeToArrayCache(osi, node=sn[ind][0], dofs=[o3.cc.X], res_type='accel', dt=rec_dt))
-        if otype == 'TAU':
-            ods['TAU'] = []
-            if isinstance(outs['TAU'], str) and outs['TAU'] == 'all':
-                ods['TAU'] = o3.recorder.ElementsToArrayCache(osi, eles=eles, arg_vals=['stress'], dt=rec_dt)
-            else:
-                for i in range(len(outs['TAU'])):
-                    ind = np.argmin(abs(ele_depths - outs['TAU'][i]))
-                    ods['TAU'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['stress'], dt=rec_dt))
-
-        if otype == 'STRS':
-            ods['STRS'] = []
-            if isinstance(outs['STRS'], str) and outs['STRS'] == 'all':
-                ods['STRS'] = o3.recorder.ElementsToArrayCache(osi, eles=eles, arg_vals=['strain'], dt=rec_dt)
-            else:
-                for i in range(len(outs['STRS'])):
-                    ind = np.argmin(abs(ele_depths - outs['STRS'][i]))
-                    ods['STRS'].append(o3.recorder.ElementToArrayCache(osi, ele=eles[ind], arg_vals=['strain'], dt=rec_dt))
 
     # Run the dynamic analysis
     o3.algorithm.Newton(osi)
@@ -186,7 +163,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
 def run():
     soil_profile = sm.SoilProfile()
     soil_profile.height = 30.0
-    xi = 0.1
+    xi = 0.03
 
     sl = sm.Soil()
     vs = 250.
@@ -224,7 +201,7 @@ def run():
     surf_sig = eqsig.AccSignal(outputs['ACCX'][0], resp_dt)
 
     o3_surf_vals = np.interp(pysra_sig.time, surf_sig.time, surf_sig.values) + in_sig.values
-    surf_sig = eqsig.AccSignal(surf_sig.values + np.interp(surf_sig.time, in_sig.time, in_sig.values))
+    surf_sig = eqsig.AccSignal(surf_sig.values + np.interp(surf_sig.time, in_sig.time, in_sig.values), surf_sig.dt)
 
     show = 1
 

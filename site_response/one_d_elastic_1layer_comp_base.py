@@ -56,22 +56,19 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
         # Establish left and right nodes
         sn.append([o3.node.Node(osi, 0, -node_depths[i]),
                     o3.node.Node(osi, ele_width, -node_depths[i])])
-        # set x and y dofs equal for left and right nodes
-        o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
+        if i != n_node_rows - 1:
+            # set x and y dofs equal for left and right nodes
+            o3.EqualDOF(osi, sn[i][0], sn[i][1], [o3.cc.X, o3.cc.Y])
 
     # Fix base nodes
     o3.Fix2DOF(osi, sn[-1][0], o3.cc.FREE, o3.cc.FIXED)
     o3.Fix2DOF(osi, sn[-1][1], o3.cc.FREE, o3.cc.FIXED)
+    o3.EqualDOF(osi, sn[-1][0], sn[-1][1], [o3.cc.X])
 
     # Define dashpot nodes
-    dashpot_node_l = o3.node.Node(osi, 0, -node_depths[-1])
-    dashpot_node_2 = o3.node.Node(osi, 0, -node_depths[-1])
-    o3.Fix2DOF(osi, dashpot_node_l, o3.cc.FIXED, o3.cc.FIXED)
-    o3.Fix2DOF(osi, dashpot_node_2, o3.cc.FREE, o3.cc.FIXED)
-
-    # define equal DOF for dashpot and soil base nodes
-    o3.EqualDOF(osi, sn[-1][0], sn[-1][1], [o3.cc.X])
-    o3.EqualDOF(osi, sn[-1][0], dashpot_node_2, [o3.cc.X])
+    dashpot_node_1 = o3.node.Node(osi, 0, -node_depths[-1])
+    dashpot_node_2 = sn[-1][0]
+    o3.Fix2DOF(osi, dashpot_node_1, o3.cc.FIXED, o3.cc.FIXED)
 
     # define materials
     ele_thick = 1.0  # m
@@ -120,19 +117,13 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
         nodes = [sn[i+1][0], sn[i+1][1], sn[i][1], sn[i][0]]  # anti-clockwise
         eles.append(o3.element.SSPquad(osi, nodes, mat, o3.cc.PLANE_STRAIN, ele_thick, 0.0, -grav))
 
-    # define material and element for viscous dampers
-    base_sl = sp.layer(sp.n_layers)
-    c_base = ele_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
-    dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
-    o3.element.ZeroLength(osi, [dashpot_node_l, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
-
     # Static analysis
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=30, p_flag=0)
     o3.algorithm.Newton(osi)
     o3.numberer.RCM(osi)
     o3.system.ProfileSPD(osi)
-    o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
+    o3.integrator.Newmark(osi, 5./6, 4./9)  # include numerical damping
     o3.analysis.Transient(osi)
     o3.analyze(osi, 40, 1.)
 
@@ -145,6 +136,12 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dtype='rayleigh', analysis
     # reset time and analysis
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
+
+    # define material and element for viscous dampers
+    base_sl = sp.layer(sp.n_layers)
+    c_base = ele_width * base_sl.unit_dry_mass / 1e3 * sp.get_shear_vel_at_depth(sp.height)
+    dashpot_mat = o3.uniaxial_material.Viscous(osi, c_base, alpha=1.)
+    o3.element.ZeroLength(osi, [dashpot_node_1, dashpot_node_2], mats=[dashpot_mat], dirs=[o3.cc.DOF2D_X])
 
     ods = {}
     for otype in outs:
