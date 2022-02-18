@@ -17,7 +17,6 @@ def run_analysis(etype, asig, use_modal_damping=0):
 
     steel_mat = o3.uniaxial_material.Steel01(osi, 300.0e6, 200.0e9, b=0.02)
 
-    # o3.element.DispBeamColumn(osi, [nodes[2], nodes[3]], )
     tran = o3.geom_transf.Linear2D(osi)
     o3.element.ElasticBeamColumn2D(osi, [nodes[2], nodes[3]], 0.01, 200.0e9, iz=1.0e-4, transf=tran)
     o3.element.ElasticBeamColumn2D(osi, [nodes[0], nodes[2]], 0.01, 200.0e9, iz=1.0e-4, transf=tran)
@@ -27,7 +26,7 @@ def run_analysis(etype, asig, use_modal_damping=0):
     o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=a_series)
 
     xi = 0.1
-    angular_freqs = np.array(o3.get_eigen(osi, n=4)) ** 0.5
+    angular_freqs = np.array(o3.get_eigen(osi, n=5)) ** 0.5  # There are vertical modes too!
     print('angular_freqs: ', angular_freqs)
     periods = 2 * np.pi / angular_freqs
     print('periods: ', periods)
@@ -53,22 +52,25 @@ def run_analysis(etype, asig, use_modal_damping=0):
         o3.algorithm.Newton(osi)
         o3_sys(osi)
         o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
-        dt = 0.01
+        dt = 0.001
     else:
         o3.algorithm.Linear(osi, factor_once=True)
 
         if etype == 'newmark_explicit':
             o3_sys(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
-            explicit_dt = periods[-1] / np.pi / 4
+            explicit_dt = periods[-1] / np.pi / 2.01
         elif etype == 'central_difference':
             o3_sys(osi)
             o3.integrator.CentralDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 4  # 0.5 is a factor of safety
+            if use_modal_damping:
+                explicit_dt = periods[-1] / np.pi / 1.5  # 1.1 is a factor of safety
+            else:
+                explicit_dt = periods[-1] / np.pi / 1.5
         elif etype == 'explicit_difference':
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 4
+            explicit_dt = periods[-1] / np.pi / 1.6
         else:
             raise ValueError(etype)
         print('explicit_dt: ', explicit_dt)
@@ -77,7 +79,7 @@ def run_analysis(etype, asig, use_modal_damping=0):
 
     roof_disp = o3.recorder.NodeToArrayCache(osi, nodes[2], dofs=[o3.cc.X], res_type='disp')
     time = o3.recorder.TimeToArrayCache(osi)
-    ttotal = 10.0
+    ttotal = 15.0
     o3.analyze(osi, int(ttotal / dt), dt)
     o3.wipe(osi)
     return time.collect(), roof_disp.collect()
@@ -101,7 +103,7 @@ def run():
         plt.plot(time, roof_d, label=etype, ls=ls[i])
     ax.set_xlabel('Time [s]')
     ax.set_ylabel('Roof disp [m]')
-    ax.set_xlim([0, 10])
+    ax.set_xlim([0, 15])
 
     plt.legend()
     name = __file__.replace('.py', '')

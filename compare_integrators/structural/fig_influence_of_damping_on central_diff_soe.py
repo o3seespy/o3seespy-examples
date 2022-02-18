@@ -3,7 +3,7 @@ import o3seespy as o3
 import eqsig
 
 
-def run_analysis(etype, asig, xi, sdt):
+def run_analysis(etype, asig, xi, sdt, use_modal_damping=0):
     osi = o3.OpenSeesInstance(ndm=2, ndf=3)
     nodes = [o3.node.Node(osi, 0.0, 0.0),
              o3.node.Node(osi, 5.5, 0.0),
@@ -25,18 +25,20 @@ def run_analysis(etype, asig, xi, sdt):
     a_series = o3.time_series.Path(osi, dt=asig.dt, values=-1 * asig.values)  # should be negative
     o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=a_series)
 
-    angular_freqs = np.array(o3.get_eigen(osi, n=4)) ** 0.5
+    angular_freqs = np.array(o3.get_eigen(osi, n=5)) ** 0.5
     print('angular_freqs: ', angular_freqs)
     periods = 2 * np.pi / angular_freqs
     print('periods: ', periods)
 
-    # Does not support modal damping
-    freqs = [0.5, 5]
-    omega_1 = 2 * np.pi * freqs[0]
-    omega_2 = 2 * np.pi * freqs[1]
-    a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-    a1 = 2 * xi / (omega_1 + omega_2)
-    o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
+    if use_modal_damping:
+        o3.ModalDamping(osi, [xi])
+    else:
+        freqs = [0.5, 5]
+        omega_1 = 2 * np.pi * freqs[0]
+        omega_2 = 2 * np.pi * freqs[1]
+        a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
+        a1 = 2 * xi / (omega_1 + omega_2)
+        o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
 
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=35, p_flag=0)
@@ -54,17 +56,17 @@ def run_analysis(etype, asig, xi, sdt):
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
             explicit_dt = periods[-1] / np.pi / 8
         elif etype == 'central_difference':
-            o3.system.FullGeneral(osi)
+            if use_modal_damping:
+                o3.system.FullGeneral(osi)
+                explicit_dt = periods[-1] / np.pi / 1.5 * sdt  # 1.5 is a factor of safety for damping
+            else:
+                o3.system.ProfileSPD(osi)
+                explicit_dt = periods[-1] / np.pi / 1.1 * sdt
             o3.integrator.CentralDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 1.5 * sdt  # 0.5 is a factor of safety
-        elif etype == 'hht_explicit':
-            o3.integrator.HHTExplicit(osi, alpha=0.5)
-            explicit_dt = periods[-1] / np.pi / 8
         elif etype == 'explicit_difference':
-            # o3.opy.system('Diagonal')
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 4
+            explicit_dt = periods[-1] / np.pi / 1.5
         else:
             raise ValueError(etype)
         print('explicit_dt: ', explicit_dt)
@@ -73,7 +75,7 @@ def run_analysis(etype, asig, xi, sdt):
 
     roof_disp = o3.recorder.NodeToArrayCache(osi, nodes[2], dofs=[o3.cc.X], res_type='disp')
     time = o3.recorder.TimeToArrayCache(osi)
-    ttotal = 10.0
+    ttotal = 15.0
 
     while o3.get_time(osi) < ttotal:
         if o3.analyze(osi, 10, dt):
@@ -101,18 +103,21 @@ def run():
     xis = [0.05, 0.1, 0.2, 0.5, 0.5, 0.05]
     scale_dts = [1, 1, 1, 1, 0.5, 1.5]
     ls = ['-', '--', ':', '--', '-.', ':']
+    use_modal_damping = 1
     bf, ax = plt.subplots()
     for i, xi in enumerate(xis):
-        time, roof_d = run_analysis(etype, acc_signal, xi, scale_dts[i])
+        time, roof_d = run_analysis(etype, acc_signal, xi, scale_dts[i], use_modal_damping=use_modal_damping)
         plt.plot(time, roof_d, label='$\\xi=$' + f'{xi*100}% dt multiplier: {scale_dts[i]}', ls=ls[i])
     ax.set_xlabel('Time [s]')
     ax.set_ylabel('Roof disp [m]')
-    ax.set_xlim([0, 10])
+    ax.set_xlim([0, 15])
     ax.set_ylim([-0.05, 0.05])
     # ax.text(1, -0.04, 'Note: Central diff. and Newmark exp. use Rayleigh damping')
     plt.legend()
     name = __file__.replace('.py', '')
     name = name.split("fig_")[-1]
+    if use_modal_damping:
+        name += '_w_modal_damping'
     ax.text(0.5, 1.05, name, horizontalalignment='center', transform=ax.transAxes,
                        color='k', fontsize=8)
     save = 1
