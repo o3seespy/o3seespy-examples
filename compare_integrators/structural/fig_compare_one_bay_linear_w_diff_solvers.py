@@ -3,7 +3,7 @@ import o3seespy as o3
 import eqsig
 
 
-def run_analysis(etype, asig):
+def run_analysis(etype, asig, use_modal_damping=0):
     osi = o3.OpenSeesInstance(ndm=2, ndf=3)
     nodes = [o3.node.Node(osi, 0.0, 0.0),
              o3.node.Node(osi, 5.5, 0.0),
@@ -26,13 +26,13 @@ def run_analysis(etype, asig):
     a_series = o3.time_series.Path(osi, dt=asig.dt, values=-1 * asig.values)  # should be negative
     o3.pattern.UniformExcitation(osi, dir=o3.cc.X, accel_series=a_series)
 
-    xi = 0.04
+    xi = 0.1
     angular_freqs = np.array(o3.get_eigen(osi, n=4)) ** 0.5
     print('angular_freqs: ', angular_freqs)
     periods = 2 * np.pi / angular_freqs
     print('periods: ', periods)
 
-    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+    if use_modal_damping:  # Does not support modal damping
         freqs = [0.5, 5]
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
@@ -45,27 +45,27 @@ def run_analysis(etype, asig):
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-5, max_iter=35, p_flag=0)
     o3.numberer.RCM(osi)
+    if use_modal_damping:
+        o3_sys = o3.system.ProfileSPD  # not sure why don't need to use FullGen here? since matrix is full?
+    else:
+        o3_sys = o3.system.ProfileSPD
     if etype == 'implicit':
         o3.algorithm.Newton(osi)
-        o3.system.FullGeneral(osi)
+        o3_sys(osi)
         o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         dt = 0.01
     else:
-        o3.algorithm.Linear(osi)
+        o3.algorithm.Linear(osi, factor_once=True)
 
         if etype == 'newmark_explicit':
-            o3.system.FullGeneral(osi)
+            o3_sys(osi)
             o3.integrator.NewmarkExplicit(osi, gamma=0.5)
-            explicit_dt = periods[-1] / np.pi / 8
+            explicit_dt = periods[-1] / np.pi / 4
         elif etype == 'central_difference':
-            o3.system.FullGeneral(osi)
+            o3_sys(osi)
             o3.integrator.CentralDifference(osi)
-            explicit_dt = periods[-1] / np.pi / 8  # 0.5 is a factor of safety
-        elif etype == 'hht_explicit':
-            o3.integrator.HHTExplicit(osi, alpha=0.5)
-            explicit_dt = periods[-1] / np.pi / 8
+            explicit_dt = periods[-1] / np.pi / 4  # 0.5 is a factor of safety
         elif etype == 'explicit_difference':
-            # o3.opy.system('Diagonal')
             o3.system.Diagonal(osi)
             o3.integrator.ExplicitDifference(osi)
             explicit_dt = periods[-1] / np.pi / 4
@@ -90,28 +90,29 @@ def run():
     motion_step = 0.01
     rec = np.loadtxt(ap.MODULE_DATA_PATH + f'gms/{record_filename}', skiprows=2)
 
-    xi = 0.05
-
     acc_signal = eqsig.AccSignal(rec, motion_step)
 
     etypes = ['implicit', 'central_difference', 'newmark_explicit', 'explicit_difference']  # ,
     ls = ['-', '--', ':', '-.']
+    use_modal_damping = 1
     bf, ax = plt.subplots()
     for i, etype in enumerate(etypes):
-        time, roof_d = run_analysis(etype, acc_signal)
+        time, roof_d = run_analysis(etype, acc_signal, use_modal_damping=use_modal_damping)
         plt.plot(time, roof_d, label=etype, ls=ls[i])
     ax.set_xlabel('Time [s]')
     ax.set_ylabel('Roof disp [m]')
     ax.set_xlim([0, 10])
-    ax.text(1, -0.04, 'Note: Central diff. and Newmark exp. use Rayleigh damping')
+
     plt.legend()
     name = __file__.replace('.py', '')
     name = name.split("fig_")[-1]
+    if use_modal_damping:
+        name += '_w_modal_damping'
     ax.text(0.5, 1.05, name, horizontalalignment='center', transform=ax.transAxes,
                        color='k', fontsize=8)
     save = 1
     if save:
-        bf.savefig(name + '.png', dpi=80)
+        bf.savefig('figs/' + name + '.png', dpi=80)
     plt.show()
 
 

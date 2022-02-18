@@ -9,7 +9,7 @@ import liquepy as lq
 
 
 def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None, outs=None,
-                  rec_dt=None, etype='implicit', forder=1.0):
+                  rec_dt=None, etype='implicit', forder=1.0, use_modal_damping=0):
     """
     Run seismic analysis of a soil profile
 
@@ -133,12 +133,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     o3.set_time(osi, 0.0)
     o3.wipe_analysis(osi)
 
-    n = 14
-    # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
-    omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
-    periods = 2 * np.pi / omegas
-    print('response_periods: ', periods)
-
     # define material and element for viscous dampers
     base_sl = sp.layer(sp.n_layers)
     c_base = ele_width * base_sl.unit_dry_mass / forder * sp.get_shear_vel_at_depth(sp.height)
@@ -177,6 +171,13 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     # Define the dynamic analysis
     o3.wipe_analysis(osi)
 
+    if use_modal_damping:
+        n = 14
+        # omegas = np.array(o3.get_eigen(osi, solver='fullGenLapack', n=n)) ** 0.5  # DO NOT USE fullGenLapack
+        omegas = np.array(o3.get_eigen(osi, n=n)) ** 0.5
+        periods = 2 * np.pi / omegas
+        print('response_periods: ', periods)
+
     o3.constraints.Transformation(osi)
     o3.test_check.NormDispIncr(osi, tol=1.0e-6, max_iter=10)
     o3.numberer.RCM(osi)
@@ -213,8 +214,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
         print('explicit_dt: ', explicit_dt, dt)
 
-    use_modal_damping = 0
-    if not use_modal_damping or etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+    if not use_modal_damping:
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
@@ -295,9 +295,11 @@ def run():
     # etypes = ['implicit', 'explicit_difference']  # , ''
     # etypes = ['explicit_difference']
     ls = ['-', '--', ':', '-.']
+    use_modal_damping = 0
 
     for i, etype in enumerate(etypes):
-        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype, forder=1e3)
+        outputs_exp = site_response(soil_profile, in_sig, freqs=(0.5, 10), xi=xi, etype=etype, forder=1e3,
+                                    use_modal_damping=use_modal_damping)
         resp_dt = (outputs_exp['TIME'][-1] - outputs_exp['TIME'][0]) / (len(outputs_exp['TIME']) - 1)
         surf_sig = eqsig.AccSignal(outputs_exp['ACCX'][0], resp_dt)
         # if etype == 'central_difference':
@@ -314,6 +316,8 @@ def run():
     sps[0].legend(prop={'size': 6})
     name = __file__.replace('.py', '')
     name = name.split("fig_")[-1]
+    if use_modal_damping:
+        name += '_w_modal_damping'
     bf.suptitle(name)
     bf.savefig(f'figs/{name}.png', dpi=90)
     plt.show()

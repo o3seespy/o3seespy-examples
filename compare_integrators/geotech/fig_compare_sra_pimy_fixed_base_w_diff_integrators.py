@@ -153,8 +153,9 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         else:
             raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
         print('explicit_dt: ', explicit_dt, dt)
+    use_modal_damping = 0
 
-    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+    if not use_modal_damping:
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)

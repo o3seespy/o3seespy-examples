@@ -132,7 +132,6 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
         # o3.integrator.Newmark(osi, gamma=0.5, beta=0.25)
         o3.algorithm.NewtonLineSearch(osi, 0.75)
         o3.integrator.Newmark(osi, 0.5, 0.25)
-        # o3.integrator.Newmark(osi, 5./6, 4./9)  # Use numerical damping since using Modal damping
         dt = 0.001
     else:
         o3.algorithm.Linear(osi)
@@ -166,19 +165,14 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
             dt = 0.1 * 10 ** ndp
         else:
             raise ValueError(explicit_dt, 0.1 * 10 ** ndp)
-
-    if etype in ['newmark_explicit', 'central_difference']:  # Does not support modal damping
+    use_modal_damping = 0
+    if not use_modal_damping:
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
         a1 = 2 * xi / (omega_1 + omega_2)
         o3.rayleigh.Rayleigh(osi, a0, 0, a1, 0)
     else:
-        # omega_1 = 2 * np.pi * freqs[0]
-        # omega_2 = 2 * np.pi * freqs[1]
-        # a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
-        # a1 = 2 * xi / (omega_1 + omega_2)
-        # o3.rayleigh.Rayleigh(osi, a0, 0, 0, 0)
         o3.ModalDamping(osi, [xi])
     o3.analysis.Transient(osi)
 

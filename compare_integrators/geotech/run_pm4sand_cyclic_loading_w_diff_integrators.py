@@ -77,7 +77,8 @@ def run_pm4sand_et(sl, csr, esig_v0=101.0e3, static_bias=0.0, n_lim=100, k0=0.5,
     o3.analysis.Transient(osi)
     freqs = [0.5, 10]
     xi = 0.1
-    if etype in ['newmark_explicit', 'central_difference', 'implicit']:  # Does not support modal damping
+    use_modal_damping = 0
+    if use_modal_damping:
         omega_1 = 2 * np.pi * freqs[0]
         omega_2 = 2 * np.pi * freqs[1]
         a0 = 2 * xi * omega_1 * omega_2 / (omega_1 + omega_2)
