@@ -101,7 +101,7 @@ def run():
     etypes = ['implicit', 'central_difference', 'newmark_explicit', 'explicit_difference']  # ,
     etype = 'central_difference'
     xis = [0.05, 0.1, 0.2, 0.5, 0.5, 0.05]
-    scale_dts = [1, 1, 1, 1, 0.5, 1.5]
+    scale_dts = [1, 1, 1, 1, 0.5, 1.4]
     ls = ['-', '--', ':', '--', '-.', ':']
     use_modal_damping = 1
     bf, ax = plt.subplots()

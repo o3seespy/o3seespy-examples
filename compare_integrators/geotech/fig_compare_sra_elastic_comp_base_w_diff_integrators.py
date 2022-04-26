@@ -31,7 +31,7 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
 
     osi = o3.OpenSeesInstance(ndm=2, ndf=2, state=3)
     assert isinstance(sp, sm.SoilProfile)
-    sp.gen_split(props=['shear_vel', 'unit_mass', 'g_mod', 'poissons_ratio'], target=dy)
+    sp.gen_split(props=['shear_vel', 'unit_mass', 'g_mod', 'bulk_mod'], target=dy)
     thicknesses = sp.split["thickness"]
     n_node_rows = len(thicknesses) + 1
     node_depths = np.cumsum(sp.split["thickness"])
@@ -39,12 +39,10 @@ def site_response(sp, asig, freqs=(0.5, 10), xi=0.03, dy=0.5, analysis_time=None
     ele_depths = (node_depths[1:] + node_depths[:-1]) / 2
     rho = sp.split['unit_mass']
     g_mod = sp.split['g_mod']
-    poi = sp.split['poissons_ratio']
-    lam = 2 * g_mod * poi / (1 - 2 * poi)
-    mu = g_mod
-    v_dil = np.sqrt((lam + 2 * mu) / rho)
+    bulk = sp.split['bulk_mod']
+    v_p = np.sqrt((bulk + 4 * g_mod / 3) / rho)
     ele_h = sp.split['thickness']
-    dts = ele_h / v_dil
+    dts = ele_h / v_p
     min_dt = min(dts)
     print('min_dt: ', min_dt)
     grav = 9.81
